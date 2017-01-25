@@ -20,9 +20,7 @@ char *background_commands[MAX_JOBS];
 static void handlerSIGINT(int sig) {
 	if (sig == SIGINT) { // Ctrl-C
 		if (foreground_pid > 0) {
-			if (kill(foreground_pid, SIGKILL) == 0) { // ASK: Kill all child processes, or just foreground process?
-				printf("PID %d killed\n", foreground_pid);
-			} else {
+			if (kill(foreground_pid, SIGKILL) != 0) { // Kill foreground process
 				perror("Kill failed");
 			}
 			foreground_pid = 0;
@@ -31,15 +29,14 @@ static void handlerSIGINT(int sig) {
 }
 
 static void handlerSIGCHLD(int sig) {
-	// pid_t pid = getpid();
-	// printf("SIGCHLD fired for %d\n", pid);
-	if (sig == SIGCHLD && foreground_pid == 0) { // Child finished in background
+	if (sig == SIGCHLD) {
 		int status;
-		pid_t pid = wait(&status);
+		pid_t pid = waitpid(-1, &status, WNOHANG); // Check if process was recently stopped
 		if (status == 0 && pid != -1) {
+			printf("Process %d finished\n", pid);
 			for (int i = 0; i < MAX_JOBS; i++) {
-				if (background_pids[i] == pid) {
-					background_pids[i] = 0;
+				if (background_pids[i] == pid) { // Check if background process
+					background_pids[i] = 0;      // Update arrays (for 'jobs' command)
 					background_commands[i] = NULL;
 					return;
 				}
@@ -54,7 +51,7 @@ static void handlerSIGCHLD(int sig) {
 // worry about deallocating memory. You need to ensure memory is allocated and deallocated
 // properly so that your shell works without leaking memory.
 //
-int getcmd(char *prompt, char *args[], int *background, int *redirection, int *piping/*, char *args2[]*/)
+int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping, char *args2[])
 {
 	int length, i = 0, k = 0;
 	char *token, *loc;
@@ -73,10 +70,10 @@ int getcmd(char *prompt, char *args[], int *background, int *redirection, int *p
 		*background = 0;
 	// Check if output redirection is specified..
 	if ((loc = strchr(line, '>')) != NULL) {
-		*redirection = 1;
+		*redir = 1;
 		*loc = ' ';
 	} else
-		*redirection = 0;
+		*redir = 0;
 
 	*piping = 0;
 	while ((token = strsep(&line, " \t\n")) != NULL) {
@@ -84,50 +81,57 @@ int getcmd(char *prompt, char *args[], int *background, int *redirection, int *p
 			if (token[j] <= 32)
 				token[j] = '\0';
 		if (strlen(token) > 0) {
-			// if (strcmp(token, "|") == 0) {
-			// 	*piping = 1;
-			// } else {
-			// 	if (*piping == 1) {
-			// 		args2[k++] = token; // Second command (for piping)
-			// 	} else {
+			if (strcmp(token, "|") == 0) {
+				*piping = 1;
+			} else {
+				if (*piping == 1) {
+					args2[k++] = token; // Second command (for piping)
+				} else {
 					args[i++] = token; // First command
-			// 	}
-			// }
+				}
+			}
 		}
 	}
 	args[i] = NULL;
-	// args2[k] = NULL;
+	args2[k] = NULL;
 	return i + k;
 }
 int main(void)
 {
-	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) {
+	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
 		printf("ERROR: Could not bind SIGINT signal handler\n");
 		exit(EXIT_FAILURE);
 	}
 
-	if (signal(SIGTSTP, SIG_IGN) == SIG_ERR) {
+	if (signal(SIGTSTP, SIG_IGN) == SIG_ERR) { // Ignore Ctrl-Z interrupt
 		printf("ERROR: Could not bind SIGTSTP signal handler\n");
 		exit(EXIT_FAILURE);
 	}
 
-	if (signal(SIGCHLD, handlerSIGCHLD) == SIG_ERR) {
+	if (signal(SIGCHLD, handlerSIGCHLD) == SIG_ERR) { // Handle child interrupt
 		printf("ERROR: Could not bind SIGCHLD signal handler\n");
 		exit(EXIT_FAILURE);
 	}
 
-	char *args[MAX_ARGS]/*, *args2[MAX_ARGS]*/;
+	char *args[MAX_ARGS], *args2[MAX_ARGS];
 	int bg, redir, piping;
 	while (1) {
 		bg = 0;
-		int cnt = getcmd("\n>> ", args, &bg, &redir, &piping/*, args2*/);
+		int cnt = getcmd("\n>> ", args, &bg, &redir, &piping, args2);
 		// for (int i = 0; i < MAX_ARGS; i++) {
 		// 	if (args[i] == NULL) {
 		// 		break;
 		// 	}
-		// 	printf("Argument %d: %s\n", i, args[i]);
+		// 	printf("args argument %d: %s\n", i, args[i]);
+		// }
+		// for (int i = 0; i < MAX_ARGS; i++) {
+		// 	if (args2[i] == NULL) {
+		// 		break;
+		// 	}
+		// 	printf("args2 argument %d: %s\n", i, args2[i]);
 		// }
 		if (cnt > 0) {
+			// BUILT-IN COMMANDS
 			if (strcmp(args[0], "cd") == 0) { // Change directory
 				if (cnt == 1)
 					printf("No directory specified.\n");
@@ -153,9 +157,7 @@ int main(void)
 						foreground_pid = 0;
 						background_pids[selected_job - 1] = 0;
 						background_commands[selected_job - 1] = NULL;
-						if (status == 0) {
-							// Success
-						} else {
+						if (status != 0) {
 							if (WIFEXITED(status)) {
 								int exit_status = WEXITSTATUS(status);
 								printf("Child terminated normally (exit status %d)\n", exit_status);
@@ -187,13 +189,7 @@ int main(void)
 					}
 				}
 			} else {
-				// int pipefd[2];
-				// if (piping == 1) {
-				// 	if (pipe(pipefd) == -1) {
-				// 		perror("Error while piping");
-				// 		exit(EXIT_FAILURE);
-				// 	}
-				// }
+				// FORK COMMANDS
 				pid_t pid = fork();
 				if (pid == -1) {
 					perror("Failed to fork");
@@ -201,10 +197,6 @@ int main(void)
 				} else if (pid == 0) {
 					// In child
 					if (signal(SIGINT, SIG_IGN) == SIG_ERR) { // Ignore Ctrl-C in children
-						printf("ERROR: Could not bind SIGINT signal handler\n");
-						exit(EXIT_FAILURE);
-					}
-					if (signal(SIGCHLD, SIG_IGN) == SIG_ERR) { // Ignore Ctrl-C in children
 						printf("ERROR: Could not bind SIGINT signal handler\n");
 						exit(EXIT_FAILURE);
 					}
@@ -223,41 +215,66 @@ int main(void)
 							}
 						}
 					}
-					// if (piping == 1) {
-					// 	if (cnt < 2) {
-					// 		printf("No second command specified\n");
-					// 		exit(EXIT_FAILURE);
-					// 	}
-					// 	close(1);
-					// 	dup(pipefd[1]); // Child writes to stdout
-					// }
-					execvp(args[0], args);
+					if (piping == 1) {
+						if (cnt < 2) {
+							printf("No second command specified\n");
+							exit(EXIT_FAILURE);
+						}
+						int fd[2];
+						if (pipe(fd) == -1) {
+							perror("Error while piping");
+							exit(EXIT_FAILURE);
+						}
+						pid_t pid2 = fork(); // Create second child for piping
+						if (pid2 == -1) {
+							perror("Failed to fork");
+							exit(EXIT_FAILURE);
+						} else if (pid2 == 0) {
+							// In second child
+							if (dup2(fd[1], STDOUT_FILENO) == -1) { // Write to STDOUT
+								perror("dup2 on STDOUT failed");
+							}
+							close(fd[0]);
+							close(fd[1]);
+							execvp(args[0], args);
+							perror("execvp failed");
+							exit(EXIT_FAILURE);
+						} else {
+							// In original child
+							if (dup2(fd[0], STDIN_FILENO) == -1) { // Read from STDIN
+								perror("dup2 on STDIN failed");
+							}
+							close(fd[0]);
+							close(fd[1]);
+							int status;
+							if (waitpid(pid2, &status, 0) == pid2) { // Wait for child
+								if (status != 0) {
+									printf("Error while waiting for second child\n");
+								}
+							} else {
+								perror("Error while waiting for second child");
+							}
+							execvp(args2[0], args2);
+						}
+					}
+					else {
+						execvp(args[0], args);
+					}
 					perror("execvp failed");
 					exit(EXIT_FAILURE);
 				} else {
 					// In parent
-					// if (piping == 1) {
-					// 	if (cnt < 2) {
-					// 		printf("No second command specified\n");
-					// 		exit(EXIT_FAILURE);
-					// 	}
-					// 	close(0);
-					// 	dup(pipefd[0]);
-					// 	execvp(args2[0], args2); // Parent reads from stdin
-					// }
 					if (bg == 0) { // foreground process
 						foreground_pid = pid;
 						int status;
 						if (waitpid(pid, &status, 0) == pid) { // Wait for child
 							foreground_pid = 0;
-							if (status == 0) {
-								// Success
-							} else {
-								("Error while waiting for child (parent)\n");
+							if (status != 0) {
+								printf("Error while waiting for child\n");
 							}
 						} else {
 							foreground_pid = 0;
-							perror("Error while waiting for child (parent-perror)");
+							perror("Error while waiting for child");
 						}
 					} else {
 						// Background process

@@ -1,0 +1,68 @@
+
+>> sleep 50 &
+
+>> sleep 60 &
+
+>> jobs
+Job # |  PID  |  Command
+--------------------------
+    1 | 16318 | sleep 50
+    2 | 16325 | sleep 60
+
+>> fg 1
+^C
+>> fg 2
+^C==16300== Conditional jump or move depends on uninitialised value(s)
+==16300==    at 0x400C80: handlerSIGCHLD (simple_shell.c:35)
+==16300==    by 0x4E6F4AF: ??? (in /lib/x86_64-linux-gnu/libc-2.23.so)
+==16300==    by 0x4F054C9: waitpid (waitpid.c:29)
+==16300==    by 0x401185: main (simple_shell.c:156)
+==16300==
+Child terminated by signal #9 (Killed)
+
+>> jobs
+Job # |  PID  |  Command
+--------------------------
+
+>> ls | wc -l
+==16372== Conditional jump or move depends on uninitialised value(s)
+==16372==    at 0x400C80: handlerSIGCHLD (simple_shell.c:35)
+==16372==    by 0x4E6F4AF: ??? (in /lib/x86_64-linux-gnu/libc-2.23.so)
+==16372==    by 0x4F054C9: waitpid (waitpid.c:29)
+==16372==    by 0x401600: main (simple_shell.c:250)
+==16372==
+3
+
+>> sleep 2
+
+>> exit
+==16300==
+==16300== HEAP SUMMARY:
+==16300==     in use at exit: 1,200 bytes in 10 blocks
+==16300==   total heap usage: 12 allocs, 2 frees, 3,248 bytes allocated
+==16300==
+==16300== 120 bytes in 1 blocks are possibly lost in loss record 2 of 3
+==16300==    at 0x4C2DB8F: malloc (in /usr/lib/valgrind/vgpreload_memcheck-amd64-linux.so)
+==16300==    by 0x4EA89E7: getdelim (iogetdelim.c:62)
+==16300==    by 0x400D79: getcmd (simple_shell.c:61)
+==16300==    by 0x40101E: main (simple_shell.c:120)
+==16300==
+==16300== 960 bytes in 8 blocks are definitely lost in loss record 3 of 3
+==16300==    at 0x4C2DB8F: malloc (in /usr/lib/valgrind/vgpreload_memcheck-amd64-linux.so)
+==16300==    by 0x4EA89E7: getdelim (iogetdelim.c:62)
+==16300==    by 0x400D79: getcmd (simple_shell.c:61)
+==16300==    by 0x40101E: main (simple_shell.c:120)
+==16300==
+==16300== LEAK SUMMARY:
+==16300==    definitely lost: 960 bytes in 8 blocks
+==16300==    indirectly lost: 0 bytes in 0 blocks
+==16300==      possibly lost: 120 bytes in 1 blocks
+==16300==    still reachable: 120 bytes in 1 blocks
+==16300==         suppressed: 0 bytes in 0 blocks
+==16300== Reachable blocks (those to which a pointer was found) are not shown.
+==16300== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==16300==
+==16300== For counts of detected and suppressed errors, rerun with: -v
+==16300== Use --track-origins=yes to see where uninitialised values come from
+==16300== ERROR SUMMARY: 6 errors from 4 contexts (suppressed: 0 from 0)
+sstapp@teaching ~/assignments/1 $ STDOUT
