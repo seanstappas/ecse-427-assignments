@@ -30,13 +30,13 @@ static void handlerSIGINT(int sig) {
 
 static void handlerSIGCHLD(int sig) {
 	if (sig == SIGCHLD) {
-		int status;
+		int status = 0;
 		pid_t pid = waitpid(-1, &status, WNOHANG); // Check if process was recently stopped
 		if (status == 0 && pid != -1) {
-			printf("Process %d finished\n", pid);
 			for (int i = 0; i < MAX_JOBS; i++) {
 				if (background_pids[i] == pid) { // Check if background process
 					background_pids[i] = 0;      // Update arrays (for 'jobs' command)
+					free(background_commands[i]);
 					background_commands[i] = NULL;
 					return;
 				}
@@ -53,13 +53,14 @@ static void handlerSIGCHLD(int sig) {
 //
 int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping, char *args2[])
 {
-	int length, i = 0, k = 0;
+	int i = 0, k = 0;
 	char *token, *loc;
 	char *line = NULL;
 	size_t linecap = 0;
 	printf("%s", prompt);
-	length = getline(&line, &linecap, stdin);
+	ssize_t length = getline(&line, &linecap, stdin);
 	if (length <= 0) {
+		free(line);
 		exit(EXIT_FAILURE);
 	}
 	// Check if background is specified..
@@ -76,7 +77,8 @@ int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping,
 		*redir = 0;
 
 	*piping = 0;
-	while ((token = strsep(&line, " \t\n")) != NULL) {
+	char *line_copy = line;
+	while ((token = strsep(&line_copy, " \t\n")) != NULL) {
 		for (int j = 0; j < strlen(token); j++)
 			if (token[j] <= 32)
 				token[j] = '\0';
@@ -85,13 +87,14 @@ int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping,
 				*piping = 1;
 			} else {
 				if (*piping == 1) {
-					args2[k++] = token; // Second command (for piping)
+					args2[k++] = strdup(token); // Second command (for piping)
 				} else {
-					args[i++] = token; // First command
+					args[i++] = strdup(token); // First command
 				}
 			}
 		}
 	}
+	free(line);
 	args[i] = NULL;
 	args2[k] = NULL;
 	return i + k;
@@ -118,18 +121,6 @@ int main(void)
 	while (1) {
 		bg = 0;
 		int cnt = getcmd("\n>> ", args, &bg, &redir, &piping, args2);
-		// for (int i = 0; i < MAX_ARGS; i++) {
-		// 	if (args[i] == NULL) {
-		// 		break;
-		// 	}
-		// 	printf("args argument %d: %s\n", i, args[i]);
-		// }
-		// for (int i = 0; i < MAX_ARGS; i++) {
-		// 	if (args2[i] == NULL) {
-		// 		break;
-		// 	}
-		// 	printf("args2 argument %d: %s\n", i, args2[i]);
-		// }
 		if (cnt > 0) {
 			// BUILT-IN COMMANDS
 			if (strcmp(args[0], "cd") == 0) { // Change directory
@@ -142,6 +133,21 @@ int main(void)
 				getcwd(cwd, sizeof(cwd));
 				printf("%s", cwd);
 			} else if (strcmp(args[0], "exit") == 0) { // Exit
+				// Free all allocated memory...
+				for (int i = 0; i < MAX_ARGS; i++) {
+					if (args[i] == NULL)
+						break;
+					free(args[i]);
+				}
+				for (int i = 0; i < MAX_ARGS; i++) {
+					if (args2[i] == NULL)
+						break;
+					free(args2[i]);
+				}
+				for (int i = 0; i < MAX_JOBS; i++) {
+					if (background_commands[i] != 0)
+						free(background_commands[i]);
+				}
 				exit(EXIT_SUCCESS);
 			} else if (strcmp(args[0], "fg") == 0) { // Foreground a job
 				if (cnt == 1)
@@ -206,7 +212,6 @@ int main(void)
 							exit(EXIT_FAILURE);
 						}
 						close(1);
-						char* file;
 						for (int i = 0; i < MAX_ARGS; i++) {
 							if (args[i] == NULL) {
 								open(args[i - 1], O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // emulating linux behaviour
@@ -266,7 +271,7 @@ int main(void)
 					// In parent
 					if (bg == 0) { // foreground process
 						foreground_pid = pid;
-						int status;
+						int status = 0;
 						if (waitpid(pid, &status, 0) == pid) { // Wait for child
 							foreground_pid = 0;
 							if (status != 0) {
@@ -279,14 +284,31 @@ int main(void)
 					} else {
 						// Background process
 						background_pids[job_nb] = pid;
-						for (int i = 1; i < cnt; i++) {
-							sprintf(args[0], "%s %s", args[0], args[i]); // Append command strings (for job listing)
+						size_t total_size = 0;
+						for (int i = 0; i < cnt; i++) {
+							total_size += sizeof(args[i]);
 						}
-						background_commands[job_nb] = args[0];
+						char *command  = (char *) malloc(total_size);
+						strcpy(command, args[0]);
+						for (int i = 1; i < cnt; i++) {
+							sprintf(command, "%s %s", command, args[i]); // Append command strings (for job listing)
+						}
+						background_commands[job_nb] = command;
 						job_nb = (job_nb + 1) % MAX_JOBS;
 					}
 				}
 			}
+		}
+
+		for (int i = 0; i < MAX_ARGS; i++) {
+			if (args[i] == NULL)
+				break;
+			free(args[i]);
+		}
+		for (int i = 0; i < MAX_ARGS; i++) {
+			if (args2[i] == NULL)
+				break;
+			free(args2[i]);
 		}
 	}
 }
