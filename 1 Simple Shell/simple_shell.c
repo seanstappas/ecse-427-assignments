@@ -1,6 +1,6 @@
 #define _XOPEN_SOURCE 700 // getline
 #define _BSD_SOURCE // strsep
-#define MAX_JOBS 1000 // ASK: How many concurrent jobs?
+#define MAX_JOBS 1000
 #define MAX_ARGS 20
 
 #include <signal.h>
@@ -20,8 +20,8 @@ char *background_commands[MAX_JOBS];
 static void handlerSIGINT(int sig) {
 	if (sig == SIGINT) { // Ctrl-C
 		if (foreground_pid > 0) {
-			if (kill(foreground_pid, SIGKILL) != 0) { // Kill foreground process
-				perror("Kill failed");
+			if (kill(foreground_pid, SIGTERM) != 0) { // Terminate foreground process
+				perror("Terminate failed");
 			}
 			foreground_pid = 0;
 		}
@@ -42,6 +42,27 @@ static void handlerSIGCHLD(int sig) {
 				}
 			}
 		}
+	}
+}
+
+void freeCommandArguments(char *args[], char *args2[]) {
+	for (int i = 0; i < MAX_ARGS; i++) {
+		if (args[i] == NULL)
+			break;
+		free(args[i]);
+	}
+	for (int i = 0; i < MAX_ARGS; i++) {
+		if (args2[i] == NULL)
+			break;
+		free(args2[i]);
+	}
+}
+
+void freeMemory(char *args[], char *args2[]) {
+	freeCommandArguments(args, args2);
+	for (int i = 0; i < MAX_JOBS; i++) {
+		if (background_commands[i] != NULL)
+			free(background_commands[i]);
 	}
 }
 
@@ -99,6 +120,176 @@ int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping,
 	args2[k] = NULL;
 	return i + k;
 }
+
+void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *args2[]) {
+	// BUILT-IN COMMANDS
+	if (strcmp(args[0], "cd") == 0) { // Change directory
+		if (cnt == 1)
+			printf("No directory specified.\n");
+		else
+			chdir(args[1]);
+	} else if (strcmp(args[0], "pwd") == 0) { // Present working directory
+		char cwd[1024];
+		getcwd(cwd, sizeof(cwd));
+		printf("%s", cwd);
+	} else if (strcmp(args[0], "exit") == 0) { // Exit
+		freeMemory(args, args2);
+		exit(EXIT_SUCCESS);
+	} else if (strcmp(args[0], "fg") == 0) { // Foreground a job
+		if (cnt == 1)
+			printf("No background job specified.\n");
+		else {
+			int selected_job = atoi(args[1]);
+			if (selected_job < 1 || background_pids[selected_job - 1] == 0) {
+				printf("Invalid job number.\n");
+			} else {
+				foreground_pid = background_pids[selected_job - 1];
+				int status = 0;
+				waitpid(foreground_pid, &status, 0); // Wait for child
+				foreground_pid = 0;
+				background_pids[selected_job - 1] = 0;
+				free(background_commands[selected_job - 1]);
+				background_commands[selected_job - 1] = NULL;
+				if (status != 0) {
+					if (WIFEXITED(status)) {
+						int exit_status = WEXITSTATUS(status);
+						printf("Child terminated normally (exit status %d)\n", exit_status);
+					}
+					if (WIFSIGNALED(status)) {
+						int signal_number = WTERMSIG(status);
+						char *signal = strsignal(signal_number);
+						// printf("Child terminated by signal #%d (%s)\n", signal_number, signal);
+						if (WCOREDUMP(status)) {
+							printf("Child produced core dump\n");
+						}
+					}
+					if (WIFSTOPPED(status)) {
+						int signal_number = 0;
+						printf("Child stopped by delivery of signal #%d\n", signal_number);
+					}
+					if (WIFCONTINUED(status)) {
+						printf("Child process was resumed by delivery of SIGCONT\n");
+					}
+				}
+			}
+		}
+	} else if (strcmp(args[0], "jobs") == 0) { // List background jobs
+		printf("Job # |  PID  |  Command\n");
+		printf("--------------------------\n");
+		for (int i = 0; i < MAX_JOBS; i++) {
+			if (background_pids[i] != 0) {
+				printf("%5d | %5d | %s\n", i + 1, background_pids[i], background_commands[i]);
+			}
+		}
+	} else {
+		// FORK COMMANDS
+		pid_t pid = fork();
+		if (pid == -1) {
+			perror("Failed to fork");
+			exit(EXIT_FAILURE);
+		} else if (pid == 0) {
+			// In child
+			if (signal(SIGINT, SIG_IGN) == SIG_ERR) { // Ignore Ctrl-C in children
+				printf("ERROR: Could not bind SIGINT signal handler\n");
+				exit(EXIT_FAILURE);
+			}
+			if (redir == 1) {
+				if (cnt < 2) {
+					printf("No output file specified\n");
+					exit(EXIT_FAILURE);
+				}
+				close(1);
+				for (int i = 0; i < MAX_ARGS; i++) {
+					if (args[i] == NULL) {
+						open(args[i - 1], O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // emulating linux behaviour
+						args[i - 1] = NULL;
+						break;
+					}
+				}
+			}
+			if (piping == 1) {
+				if (cnt < 2) {
+					printf("No second command specified\n");
+					exit(EXIT_FAILURE);
+				}
+				int fd[2];
+				if (pipe(fd) == -1) {
+					perror("Error while piping");
+					exit(EXIT_FAILURE);
+				}
+				pid_t pid2 = fork(); // Create second child for piping
+				if (pid2 == -1) {
+					perror("Failed to fork");
+					exit(EXIT_FAILURE);
+				} else if (pid2 == 0) {
+					// In second child
+					if (dup2(fd[1], STDOUT_FILENO) == -1) { // Write to STDOUT
+						perror("dup2 on STDOUT failed");
+					}
+					close(fd[0]);
+					close(fd[1]);
+					execvp(args[0], args);
+					perror("execvp failed");
+					exit(EXIT_FAILURE);
+				} else {
+					// In original child
+					if (dup2(fd[0], STDIN_FILENO) == -1) { // Read from STDIN
+						perror("dup2 on STDIN failed");
+					}
+					close(fd[0]);
+					close(fd[1]);
+					int status;
+					if (waitpid(pid2, &status, 0) == pid2) { // Wait for child
+						if (status != 0) {
+							// Error while waiting for second child
+						}
+					} else {
+						perror("Error while waiting for second child");
+					}
+					execvp(args2[0], args2);
+				}
+			}
+			else {
+				execvp(args[0], args);
+			}
+			// freeCommandArguments(args, args2);
+			freeCommandArguments(args, args2);
+			perror("execvp failed");
+			exit(EXIT_FAILURE);
+		} else {
+			// In parent
+			if (bg == 0) { // foreground process
+				foreground_pid = pid;
+				int status = 0;
+				if (waitpid(pid, &status, 0) == pid) { // Wait for child
+					foreground_pid = 0;
+					if (status != 0) {
+						// printf("Error while waiting for child");
+					}
+				} else {
+					foreground_pid = 0;
+					perror("Error while waiting for child");
+				}
+			} else {
+				// Background process
+				background_pids[job_nb] = pid;
+				size_t total_size = 0;
+				for (int i = 0; i < cnt; i++) {
+					total_size += sizeof(args[i]);
+				}
+				char *command  = (char *) malloc(total_size);
+				strcpy(command, args[0]);
+				for (int i = 1; i < cnt; i++) {
+					sprintf(command, "%s %s", command, args[i]); // Append command strings (for job listing)
+				}
+				background_commands[job_nb] = command;
+				job_nb = (job_nb + 1) % MAX_JOBS;
+			}
+		}
+	}
+
+}
+
 int main(void)
 {
 	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
@@ -122,193 +313,8 @@ int main(void)
 		bg = 0;
 		int cnt = getcmd("\n>> ", args, &bg, &redir, &piping, args2);
 		if (cnt > 0) {
-			// BUILT-IN COMMANDS
-			if (strcmp(args[0], "cd") == 0) { // Change directory
-				if (cnt == 1)
-					printf("No directory specified.\n");
-				else
-					chdir(args[1]);
-			} else if (strcmp(args[0], "pwd") == 0) { // Present working directory
-				char cwd[1024];
-				getcwd(cwd, sizeof(cwd));
-				printf("%s", cwd);
-			} else if (strcmp(args[0], "exit") == 0) { // Exit
-				// Free all allocated memory...
-				for (int i = 0; i < MAX_ARGS; i++) {
-					if (args[i] == NULL)
-						break;
-					free(args[i]);
-				}
-				for (int i = 0; i < MAX_ARGS; i++) {
-					if (args2[i] == NULL)
-						break;
-					free(args2[i]);
-				}
-				for (int i = 0; i < MAX_JOBS; i++) {
-					if (background_commands[i] != 0)
-						free(background_commands[i]);
-				}
-				exit(EXIT_SUCCESS);
-			} else if (strcmp(args[0], "fg") == 0) { // Foreground a job
-				if (cnt == 1)
-					printf("No background job specified.\n");
-				else {
-					int selected_job = atoi(args[1]);
-					if (selected_job < 1 || background_pids[selected_job - 1] == 0) {
-						printf("Invalid job number.\n");
-					} else {
-						foreground_pid = background_pids[selected_job - 1];
-						int status;
-						waitpid(foreground_pid, &status, 0); // Wait for child
-						foreground_pid = 0;
-						background_pids[selected_job - 1] = 0;
-						background_commands[selected_job - 1] = NULL;
-						if (status != 0) {
-							if (WIFEXITED(status)) {
-								int exit_status = WEXITSTATUS(status);
-								printf("Child terminated normally (exit status %d)\n", exit_status);
-							}
-							if (WIFSIGNALED(status)) {
-								int signal_number = WTERMSIG(status);
-								char *signal = strsignal(signal_number);
-								printf("Child terminated by signal #%d (%s)\n", signal_number, signal);
-								if (WCOREDUMP(status)) {
-									printf("Child produced core dump\n");
-								}
-							}
-							if (WIFSTOPPED(status)) {
-								int signal_number = 0;
-								printf("Child stopped by delivery of signal #%d\n", signal_number);
-							}
-							if (WIFCONTINUED(status)) {
-								printf("Child process was resumed by delivery of SIGCONT\n");
-							}
-						}
-					}
-				}
-			} else if (strcmp(args[0], "jobs") == 0) { // List background jobs
-				printf("Job # |  PID  |  Command\n"); // ASK: What to output exactly? What to output when 0 jobs?
-				printf("--------------------------\n");
-				for (int i = 0; i < MAX_JOBS; i++) {
-					if (background_pids[i] != 0) {
-						printf("%5d | %5d | %s\n", i + 1, background_pids[i], background_commands[i]);
-					}
-				}
-			} else {
-				// FORK COMMANDS
-				pid_t pid = fork();
-				if (pid == -1) {
-					perror("Failed to fork");
-					exit(EXIT_FAILURE);
-				} else if (pid == 0) {
-					// In child
-					if (signal(SIGINT, SIG_IGN) == SIG_ERR) { // Ignore Ctrl-C in children
-						printf("ERROR: Could not bind SIGINT signal handler\n");
-						exit(EXIT_FAILURE);
-					}
-					if (redir == 1) {
-						if (cnt < 2) {
-							printf("No output file specified\n");
-							exit(EXIT_FAILURE);
-						}
-						close(1);
-						for (int i = 0; i < MAX_ARGS; i++) {
-							if (args[i] == NULL) {
-								open(args[i - 1], O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // emulating linux behaviour
-								args[i - 1] = NULL;
-								break;
-							}
-						}
-					}
-					if (piping == 1) {
-						if (cnt < 2) {
-							printf("No second command specified\n");
-							exit(EXIT_FAILURE);
-						}
-						int fd[2];
-						if (pipe(fd) == -1) {
-							perror("Error while piping");
-							exit(EXIT_FAILURE);
-						}
-						pid_t pid2 = fork(); // Create second child for piping
-						if (pid2 == -1) {
-							perror("Failed to fork");
-							exit(EXIT_FAILURE);
-						} else if (pid2 == 0) {
-							// In second child
-							if (dup2(fd[1], STDOUT_FILENO) == -1) { // Write to STDOUT
-								perror("dup2 on STDOUT failed");
-							}
-							close(fd[0]);
-							close(fd[1]);
-							execvp(args[0], args);
-							perror("execvp failed");
-							exit(EXIT_FAILURE);
-						} else {
-							// In original child
-							if (dup2(fd[0], STDIN_FILENO) == -1) { // Read from STDIN
-								perror("dup2 on STDIN failed");
-							}
-							close(fd[0]);
-							close(fd[1]);
-							int status;
-							if (waitpid(pid2, &status, 0) == pid2) { // Wait for child
-								if (status != 0) {
-									printf("Error while waiting for second child\n");
-								}
-							} else {
-								perror("Error while waiting for second child");
-							}
-							execvp(args2[0], args2);
-						}
-					}
-					else {
-						execvp(args[0], args);
-					}
-					perror("execvp failed");
-					exit(EXIT_FAILURE);
-				} else {
-					// In parent
-					if (bg == 0) { // foreground process
-						foreground_pid = pid;
-						int status = 0;
-						if (waitpid(pid, &status, 0) == pid) { // Wait for child
-							foreground_pid = 0;
-							if (status != 0) {
-								printf("Error while waiting for child\n");
-							}
-						} else {
-							foreground_pid = 0;
-							perror("Error while waiting for child");
-						}
-					} else {
-						// Background process
-						background_pids[job_nb] = pid;
-						size_t total_size = 0;
-						for (int i = 0; i < cnt; i++) {
-							total_size += sizeof(args[i]);
-						}
-						char *command  = (char *) malloc(total_size);
-						strcpy(command, args[0]);
-						for (int i = 1; i < cnt; i++) {
-							sprintf(command, "%s %s", command, args[i]); // Append command strings (for job listing)
-						}
-						background_commands[job_nb] = command;
-						job_nb = (job_nb + 1) % MAX_JOBS;
-					}
-				}
-			}
+			executeCommand(cnt, args, bg, redir, piping, args2);
 		}
-
-		for (int i = 0; i < MAX_ARGS; i++) {
-			if (args[i] == NULL)
-				break;
-			free(args[i]);
-		}
-		for (int i = 0; i < MAX_ARGS; i++) {
-			if (args2[i] == NULL)
-				break;
-			free(args2[i]);
-		}
+		freeCommandArguments(args, args2);
 	}
 }
