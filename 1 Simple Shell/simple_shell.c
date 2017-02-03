@@ -193,6 +193,7 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 				printf("ERROR: Could not bind SIGINT signal handler\n");
 				exit(EXIT_FAILURE);
 			}
+			// Redirect
 			if (redir == 1) {
 				if (cnt < 2) {
 					printf("No output file specified\n");
@@ -201,12 +202,13 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 				close(1);
 				for (int i = 0; i < MAX_ARGS; i++) {
 					if (args[i] == NULL) {
-						open(args[i - 1], O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // emulating linux behaviour
+						open(args[i - 1], O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // Default Linux permissions
 						args[i - 1] = NULL;
 						break;
 					}
 				}
 			}
+			// Pipe
 			if (piping == 1) {
 				if (cnt < 2) {
 					printf("No second command specified\n");
@@ -252,7 +254,6 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 			else {
 				execvp(args[0], args);
 			}
-			// freeCommandArguments(args, args2);
 			freeCommandArguments(args, args2);
 			perror("execvp failed");
 			exit(EXIT_FAILURE);
@@ -264,7 +265,7 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 				if (waitpid(pid, &status, 0) == pid) { // Wait for child
 					foreground_pid = 0;
 					if (status != 0) {
-						// printf("Error while waiting for child");
+						// Error while waiting for child
 					}
 				} else {
 					foreground_pid = 0;
