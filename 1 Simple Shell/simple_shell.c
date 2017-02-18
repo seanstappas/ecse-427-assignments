@@ -13,12 +13,17 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-pid_t children_pgid, foreground_pid, background_pids[MAX_JOBS];
+pid_t foreground_pid, background_pids[MAX_JOBS];
 int job_nb = 0;
 char *background_commands[MAX_JOBS];
 
+
+/*
+ * Handler for the SIGINT signal (Ctrl-C).
+ */
+
 static void handlerSIGINT(int sig) {
-	if (sig == SIGINT) { // Ctrl-C
+	if (sig == SIGINT) {
 		if (foreground_pid > 0) {
 			if (kill(foreground_pid, SIGTERM) != 0) { // Terminate foreground process
 				perror("Terminate failed");
@@ -27,6 +32,10 @@ static void handlerSIGINT(int sig) {
 		}
 	}
 }
+
+/*
+ * Handler for the SIGCHLD signal (called when child process stops or terminates).
+ */
 
 static void handlerSIGCHLD(int sig) {
 	if (sig == SIGCHLD) {
@@ -45,6 +54,10 @@ static void handlerSIGCHLD(int sig) {
 	}
 }
 
+/*
+ * Free allocated memory for the command arguments.
+ */
+
 void freeCommandArguments(char *args[], char *args2[]) {
 	for (int i = 0; i < MAX_ARGS; i++) {
 		if (args[i] == NULL)
@@ -58,6 +71,9 @@ void freeCommandArguments(char *args[], char *args2[]) {
 	}
 }
 
+/*
+ * Free all allocated memory.
+ */
 void freeMemory(char *args[], char *args2[]) {
 	freeCommandArguments(args, args2);
 	for (int i = 0; i < MAX_JOBS; i++) {
@@ -66,12 +82,20 @@ void freeMemory(char *args[], char *args2[]) {
 	}
 }
 
-//
-// This code is given for illustration purposes. You need not include or follow this
-// strictly. Feel free to writer better or bug free code. This example code block does not
-// worry about deallocating memory. You need to ensure memory is allocated and deallocated
-// properly so that your shell works without leaking memory.
-//
+/*
+ * Get command from prompt 
+ * --------------------
+ *
+ *  prompt:     prompt string to print to user
+ *  args:       array of arguments
+ *  background: flag to indicate a background command
+ *  redir:      flag to indicate a redirection command
+ *  piping:     flag to indicate a pipe command
+ *  args2:      second array of arguments (used for piping)
+ *
+ *  returns: the number of arguments in the command
+ */
+
 int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping, char *args2[])
 {
 	int i = 0, k = 0;
@@ -121,6 +145,19 @@ int getcmd(char *prompt, char *args[], int *background, int *redir, int *piping,
 	return i + k;
 }
 
+/*
+ * Execute command given by args and args2
+ * --------------------
+ *
+ *  cnt:    number of command arguments
+ *  args:   array of arguments
+ *  bg:     flag to indicate a background command
+ *  redir:  flag to indicate a redirection command
+ *  piping: flag to indicate a pipe command
+ *  args2:  second array of arguments (used for piping)
+ *
+ */
+
 void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *args2[]) {
 	// BUILT-IN COMMANDS
 	if (strcmp(args[0], "cd") == 0) { // Change directory
@@ -158,7 +195,7 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 					if (WIFSIGNALED(status)) {
 						int signal_number = WTERMSIG(status);
 						char *signal = strsignal(signal_number);
-						// printf("Child terminated by signal #%d (%s)\n", signal_number, signal);
+						// Child terminated by signal (not printed to enhance user experience)
 						if (WCOREDUMP(status)) {
 							printf("Child produced core dump\n");
 						}
@@ -243,7 +280,7 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 					int status;
 					if (waitpid(pid2, &status, 0) == pid2) { // Wait for child
 						if (status != 0) {
-							// Error while waiting for second child
+							// Error while waiting for second child (not printed to enhance user experience)
 						}
 					} else {
 						perror("Error while waiting for second child");
@@ -265,7 +302,7 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 				if (waitpid(pid, &status, 0) == pid) { // Wait for child
 					foreground_pid = 0;
 					if (status != 0) {
-						// Error while waiting for child
+						// Error while waiting for child (not printed to enhance user experience)
 					}
 				} else {
 					foreground_pid = 0;
@@ -288,7 +325,6 @@ void executeCommand(int cnt, char *args[], int bg, int redir, int piping, char *
 			}
 		}
 	}
-
 }
 
 int main(void)
