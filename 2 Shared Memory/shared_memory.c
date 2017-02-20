@@ -1,6 +1,9 @@
-#include <fcntl.h>
-#include <sys/stat.h>
+#define _XOPEN_SOURCE 700
+//#define _BSD_SOURCE
+
 #include <sys/mman.h>
+#include <sys/stat.h>        /* For mode constants */
+#include <fcntl.h>           /* For O_* constants */
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -34,8 +37,8 @@ in the above program. The fstat() system call allows us to determine the length 
 object. This length is used in the mmap() so that we can map only that portion into the virtual address
 space.
 */
-void setup(char *str) {
-	int fd = shm_open("myshared", O_CREAT | ORDWR, S_IRWXU);
+void setup_memory(char *str) {
+	int fd = shm_open("seanstappas", O_CREAT | O_RDWR, S_IRWXU);
 
 	char *addr = mmap(NULL, strlen(str), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	ftruncate(fd, strlen(str));
@@ -52,8 +55,10 @@ in the above program. The fstat() system call allows us to determine the length 
 object. This length is used in the mmap() so that we can map only that portion into the virtual address
 space.
 */
-void read() {
-	int fd = shm_open("myshared", O_RDWR, 0);
+void read_memory() {
+	struct stat s;
+
+	int fd = shm_open("seanstappas", O_RDWR, 0);
 	if (fd < 0)
 		printf("Error.. opening shm\n");
 
@@ -61,10 +66,13 @@ void read() {
 		printf("Error fstat\n");
 
 	char *addr = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
+
+	printf("Memory: %s\n", addr);
+
 	close(fd);
 }
 
 int main(int argc, char **argv) {
-	setup(argv[1]);
-	read();
+	setup_memory(argv[1]);
+	read_memory();
 }
