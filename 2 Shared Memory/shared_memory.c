@@ -8,9 +8,11 @@
 #include <unistd.h>
 #include <string.h>
 
-#define STORE_SIZE 1000 // number of key-value pairs
+#define STORE_SIZE 1000 // number of key-value pairs (n)
 #define KEY_VALUE_PAIR_SIZE 100
-#define NUMBER_OF_PODS 100
+#define NUMBER_OF_PODS 100 // (k)
+
+char *store_address;
 
 /*
 Simple hash function. Taken from:
@@ -36,27 +38,27 @@ semaphore db = 1; /* controls access to the database */
 int rc = 0; /* # of processes reading or wanting to */
 void reader(void)
 {
-	while (TRUE) { /* repeat forever */
-		down(&mutex); /* get exclusive access to rc */
-		rc = rc + 1; /* one reader more now */
-		if (rc == 1) down(&db); /* if this is the first reader ... */
-		up(&mutex); /* release exclusive access to rc */
-		read data base(); /* access the data */
-		down(&mutex); /* get exclusive access to rc */
-		rc = rc −1; /* one reader few er now */
-		if (rc == 0) up(&db); /* if this is the last reader ... */
-		up(&mutex); /* release exclusive access to rc */
-		use data read(); /* noncr itical region */
-	}
+	//while (TRUE) { /* repeat forever */
+	//	down(&mutex); /* get exclusive access to rc */
+	//	rc = rc + 1; /* one reader more now */
+	//	if (rc == 1) down(&db); /* if this is the first reader ... */
+	//	up(&mutex); /* release exclusive access to rc */
+	//	read data base(); /* access the data */
+	//	down(&mutex); /* get exclusive access to rc */
+	//	rc = rc −1; /* one reader few er now */
+	//	if (rc == 0) up(&db); /* if this is the last reader ... */
+	//	up(&mutex); /* release exclusive access to rc */
+	//	use data read(); /* noncr itical region */
+	//}
 }
 void writer(void)
 {
-	while (TRUE) { /* repeat forever */
-		think up data(); /* noncr itical region */
-		down(&db); /* get exclusive access */
-		wr ite data base(); /* update the data */
-		up(&db); /* release exclusive access */
-	}
+	//while (TRUE) { /* repeat forever */
+	//	think up data(); /* noncr itical region */
+	//	down(&db); /* get exclusive access */
+	//	wr ite data base(); /* update the data */
+	//	up(&db); /* release exclusive access */
+	//}
 }
 
 /*
@@ -72,8 +74,8 @@ int kv_store_create(char *name) {
 	if (fd == -1)
 		return -1;
 
-	char *addr = mmap(NULL, STORE_SIZE * KEY_VALUE_PAIR_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (addr == MAP_FAILED) {
+	store_address = mmap(NULL, STORE_SIZE * KEY_VALUE_PAIR_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // save address returned here? or call mmap every time?
+	if (store_address == MAP_FAILED) {
 		perror("mmap failed");
 		return -1;
 	}
@@ -99,7 +101,12 @@ as possible.
 */
 int kv_store_write(char *key, char *value) {
 	int pod_index = hash(key) % NUMBER_OF_PODS;
+	int pairs_per_pod = STORE_SIZE / NUMBER_OF_PODS;
+	int memory_offset = pod_index * pairs_per_pod;
 
+	memcpy(store_address + memory_offset, value, strlen(value));
+
+	return 0;
 }
 
 /*
@@ -110,6 +117,26 @@ is found, a NULL value is returned.
 */
 char *kv_store_read(char *key) {
 	int pod_index = hash(key) % NUMBER_OF_PODS;
+	int pairs_per_pod = STORE_SIZE / NUMBER_OF_PODS;
+	int memory_offset = pod_index * pairs_per_pod;
+
+	//struct stat s;
+
+	//int fd = shm_open("/seanstappas", O_RDWR, 0); // mode set to 0 because we don't care (not creating)
+	//if (fd < 0)
+	//	printf("Error.. opening shm\n");
+
+	//if (fstat(fd, &s) == -1)
+	//	printf("Error fstat\n");
+
+	//char *addr = mmap(NULL, KEY_VALUE_PAIR_SIZE, PROT_READ, MAP_SHARED, fd, 0);
+
+	printf("Read: %s\n", store_address + memory_offset);
+
+	//close(fd);
+
+
+	return NULL;
 }
 
 /*
@@ -117,7 +144,7 @@ The kv_store_read_all() function takes a key and returns all the values in the s
 returned if there is no records for the key.
 */
 char **kv_store_read_all(char *key) {
-
+	return NULL;
 }
 
 /*
@@ -166,6 +193,12 @@ void read_memory() {
 }
 
 int main(int argc, char **argv) {
-	setup_memory(argv[1]);
-	read_memory();
+	//setup_memory(argv[1]);
+	//read_memory();
+	//int pod_index = hash(argv[1]) % NUMBER_OF_PODS;
+	//printf("Index: %d\n", pod_index);
+	kv_store_create("/seanstappas");
+	kv_store_write("key1", "value1");
+	kv_store_read("key1");
+
 }
