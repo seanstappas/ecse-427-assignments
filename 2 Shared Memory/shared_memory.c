@@ -1,3 +1,13 @@
+/*
+QUESTIONS:
+Once store is created, do we save that address, or call shm_open every time to write? Equivalently: is create always called before store, or do we need to potentially create when writing?
+Does kv_store_write return 0 on success, -1 on failure, like kv_store_create?
+"We will provide you with a tester for the key-value store." Is this public information? What will the tester look like?
+How much space is a key-value pair supposed to take up?
+Why does k (number of pods) have to be a multiple of 16?
+How are we supposed to store the key with the value? One after the other? With what separation?
+*/
+
 #define _XOPEN_SOURCE 700
 //#define _BSD_SOURCE
 
@@ -10,7 +20,7 @@
 
 #define STORE_SIZE 1000 // number of key-value pairs (n)
 #define KEY_VALUE_PAIR_SIZE 100
-#define NUMBER_OF_PODS 100 // (k)
+#define NUMBER_OF_PODS 96 // k pods. could be a multiple of 16
 
 char *store_address;
 
