@@ -1,13 +1,3 @@
-/*
-QUESTIONS:
-Once store is created, do we save that address, or call shm_open every time to write? Equivalently: is create always called before store, or do we need to potentially create when writing?
-Does kv_store_write return 0 on success, -1 on failure, like kv_store_create?
-"We will provide you with a tester for the key-value store." Is this public information? What will the tester look like?
-How much space is a key-value pair supposed to take up?
-Why does k (number of pods) have to be a multiple of 16?
-How are we supposed to store the key with the value? One after the other? With what separation?
-*/
-
 #define _XOPEN_SOURCE 700
 //#define _BSD_SOURCE
 
@@ -20,7 +10,16 @@ How are we supposed to store the key with the value? One after the other? With w
 
 #define STORE_SIZE 1000 // number of key-value pairs (n)
 #define KEY_VALUE_PAIR_SIZE 100
+#define KEY_VALUE_SIZE 100
+#define POD_SIZE 10
 #define NUMBER_OF_PODS 96 // k pods. could be a multiple of 16
+
+struct shared_memory
+{
+	char keys[NUMBER_OF_PODS][POD_SIZE][KEY_VALUE_SIZE];
+	char values[NUMBER_OF_PODS][POD_SIZE][KEY_VALUE_SIZE];
+	int indices[NUMBER_OF_PODS];
+};
 
 char *store_address;
 
@@ -202,7 +201,7 @@ void read_memory() {
 	close(fd);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) { // TODO: Remove this in final code!
 	//setup_memory(argv[1]);
 	//read_memory();
 	//int pod_index = hash(argv[1]) % NUMBER_OF_PODS;
