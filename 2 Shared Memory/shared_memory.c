@@ -1,5 +1,4 @@
 #define _XOPEN_SOURCE 700
-//#define _BSD_SOURCE
 
 #include <sys/mman.h>
 #include <sys/stat.h>        /* For mode constants */
@@ -8,20 +7,18 @@
 #include <unistd.h>
 #include <string.h>
 
-#define STORE_SIZE 1000 // number of key-value pairs (n)
-#define KEY_VALUE_PAIR_SIZE 100
-#define KEY_VALUE_SIZE 100
+#define MAX_KEY_SIZE 32
+#define MAX_VALUE_SIZE 256
 #define POD_SIZE 10
-#define NUMBER_OF_PODS 96 // k pods. could be a multiple of 16
+#define NUMBER_OF_PODS 256 // k pods. could be a multiple of 16
 
-struct shared_memory
-{
-	char keys[NUMBER_OF_PODS][POD_SIZE][KEY_VALUE_SIZE];
-	char values[NUMBER_OF_PODS][POD_SIZE][KEY_VALUE_SIZE];
-	int indices[NUMBER_OF_PODS];
-};
+typedef struct {
+	char keys[NUMBER_OF_PODS][POD_SIZE][MAX_KEY_SIZE];
+	char values[NUMBER_OF_PODS][POD_SIZE][MAX_VALUE_SIZE];
+	int key_value_indices[NUMBER_OF_PODS];
+} SharedMemory;
 
-char *store_address;
+SharedMemory *shared_memory;
 
 /*
 Simple hash function. Taken from:
@@ -80,16 +77,18 @@ the size is measured in terms of the number of key-value pairs in the store.
 */
 int kv_store_create(char *name) {
 	int fd = shm_open(name, O_CREAT | O_RDWR, S_IRWXU);
-	if (fd == -1)
+	if (fd == -1) {
+		perror("shm_open failed");
 		return -1;
+	}
 
-	store_address = mmap(NULL, STORE_SIZE * KEY_VALUE_PAIR_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // save address returned here? or call mmap every time?
-	if (store_address == MAP_FAILED) {
+	shared_memory = mmap(NULL, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (shared_memory == MAP_FAILED) {
 		perror("mmap failed");
 		return -1;
 	}
 
-	int status = ftruncate(fd, STORE_SIZE * KEY_VALUE_PAIR_SIZE); // Needed to set length of new shared memory object (initially 0)
+	int status = ftruncate(fd, sizeof(SharedMemory));
 	if (status == -1) {
 		perror("ftruncate failed");
 		return -1;
@@ -107,13 +106,16 @@ placeholders. If the store is already full, the store needs to evict an existing
 new one. In addition to storing the key-value pair in the memory, this function needs to update an index
 that is also maintained in the store so that the reads looking for an key-value pair can be completed as fast
 as possible.
+Returns 0 on success, -1 on failure.
 */
 int kv_store_write(char *key, char *value) {
-	int pod_index = hash(key) % NUMBER_OF_PODS;
-	int pairs_per_pod = STORE_SIZE / NUMBER_OF_PODS;
-	int memory_offset = pod_index * pairs_per_pod;
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	int key_value_index = shared_memory->key_value_indices[pod_number] + 1; // TODO: think about incrementing and accessing this...
 
-	memcpy(store_address + memory_offset, value, strlen(value));
+	shared_memory->key_value_indices[pod_number] = key_value_index;
+
+	memcpy(shared_memory->keys[pod_number][key_value_index], key, strlen(key));
+	memcpy(shared_memory->values[pod_number][key_value_index], value, strlen(value));
 
 	return 0;
 }
@@ -125,27 +127,9 @@ is the responsibility of the calling function to free the memory allocated for t
 is found, a NULL value is returned.
 */
 char *kv_store_read(char *key) {
-	int pod_index = hash(key) % NUMBER_OF_PODS;
-	int pairs_per_pod = STORE_SIZE / NUMBER_OF_PODS;
-	int memory_offset = pod_index * pairs_per_pod;
-
-	//struct stat s;
-
-	//int fd = shm_open("/seanstappas", O_RDWR, 0); // mode set to 0 because we don't care (not creating)
-	//if (fd < 0)
-	//	printf("Error.. opening shm\n");
-
-	//if (fstat(fd, &s) == -1)
-	//	printf("Error fstat\n");
-
-	//char *addr = mmap(NULL, KEY_VALUE_PAIR_SIZE, PROT_READ, MAP_SHARED, fd, 0);
-
-	printf("Read: %s\n", store_address + memory_offset);
-
-	//close(fd);
-
-
-	return NULL;
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	int key_value_index = shared_memory->key_value_indices[pod_number];
+	return shared_memory->values[pod_number][key_value_index];
 }
 
 /*
@@ -157,57 +141,28 @@ char **kv_store_read_all(char *key) {
 }
 
 /*
-The program listing below shows a small example program where the string provided as the first
-argument is copied into the shared memory. The shared memory is created under the name “myshared.”
-Obviously, you need to use a unique name that is related to your login name so that there are no name
-conflicts even if you happen to use a lab machine for running the program. The mmap() is used to map
-the shared memory object starting at an address. By specifying a NULL value for the first argument of the
-mmap(), we are letting the kernel pick the starting location for the shared memory object in the virtual
-address space. The ftruncate() call is used to resize the shared memory object to fit the string (first 
-argument). As the last statement we copy the bytes into the shared memory region.
+Unmaps and unlinks the shared memory.
 */
-void setup_memory(char *str) {
-	int fd = shm_open("/seanstappas", O_CREAT | O_RDWR, S_IRWXU);
-
-	char *addr = mmap(NULL, strlen(str), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	ftruncate(fd, strlen(str)); // Needed to set length of new shared memory object (initially 0)
-	close(fd);
-
-	memcpy(addr, str, strlen(str));
-}
-
-
-/*
-The example below shows a program for reading the contents in the shared memory object and
-writing it to the standard output. Obviously, the name of the shared memory object should match the one
-in the above program. The fstat() system call allows us to determine the length of the shared memory
-object. This length is used in the mmap() so that we can map only that portion into the virtual address
-space.
-*/
-void read_memory() {
-	struct stat s;
-
-	int fd = shm_open("/seanstappas", O_RDWR, 0); // mode set to 0 because we don't care (not creating)
-	if (fd < 0)
-		printf("Error.. opening shm\n");
-
-	if (fstat(fd, &s) == -1)
-		printf("Error fstat\n");
-
-	char *addr = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
-
-	printf("Memory: %s\n", addr);
-
-	close(fd);
+int kv_store_cleanup(char *name) {
+	int unmap_status = munmap(shared_memory, sizeof(SharedMemory));
+	if (unmap_status == -1) {
+		perror("munmap failed");
+		return -1;
+	}
+	int unlink_status = shm_unlink(name);
+	if (unlink_status == -1) {
+		perror("unlink status failed");
+		return -1;
+	}
+	return 0;
 }
 
 int main(int argc, char **argv) { // TODO: Remove this in final code!
-	//setup_memory(argv[1]);
-	//read_memory();
-	//int pod_index = hash(argv[1]) % NUMBER_OF_PODS;
-	//printf("Index: %d\n", pod_index);
 	kv_store_create("/seanstappas");
-	kv_store_write("key1", "value1");
-	kv_store_read("key1");
-
+	if (argv[1] != NULL) {
+		if (argv[2] != NULL)
+			kv_store_write(argv[1], argv[2]);
+		printf("Read: %s\n", kv_store_read(argv[1]));
+	}
+	kv_store_cleanup("/seanstappas");
 }
