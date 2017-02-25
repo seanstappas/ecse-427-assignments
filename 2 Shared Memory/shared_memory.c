@@ -76,6 +76,9 @@ result in a 0 return value. The creation function could set a maximum size for t
 the size is measured in terms of the number of key-value pairs in the store.
 */
 int kv_store_create(char *name) {
+	if (name == NULL)
+		return -1;
+
 	int fd = shm_open(name, O_CREAT | O_RDWR, S_IRWXU);
 	if (fd == -1) {
 		perror("shm_open failed");
@@ -109,6 +112,19 @@ as possible.
 Returns 0 on success, -1 on failure.
 */
 int kv_store_write(char *key, char *value) {
+	if (key == NULL || value == NULL)
+		return -1;
+
+	if (strlen(key) > MAX_KEY_SIZE) {
+		printf("Max key size is %d", MAX_KEY_SIZE);
+		return -1;
+	}
+
+	if (strlen(value) > MAX_VALUE_SIZE) { // TODO: truncate only the value? or value and key?
+		printf("Max value size is %d", MAX_VALUE_SIZE);
+		return -1;
+	}
+
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 	int key_value_index = shared_memory->key_value_indices[pod_number] + 1; // TODO: think about incrementing and accessing this...
 
@@ -127,6 +143,9 @@ is the responsibility of the calling function to free the memory allocated for t
 is found, a NULL value is returned.
 */
 char *kv_store_read(char *key) {
+	if (key == NULL)
+		return -1;
+
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 	int key_value_index = shared_memory->key_value_indices[pod_number];
 	return shared_memory->values[pod_number][key_value_index];
