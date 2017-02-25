@@ -114,8 +114,8 @@ int kv_store_write(char *key, char *value) {
 
 	shared_memory->key_value_indices[pod_number] = key_value_index;
 
-	memcpy(shared_memory->keys[pod_number][key_value_index], key, strlen(key));
-	memcpy(shared_memory->values[pod_number][key_value_index], value, strlen(value));
+	strcpy(shared_memory->keys[pod_number][key_value_index], key);
+	strcpy(shared_memory->values[pod_number][key_value_index], value);
 
 	return 0;
 }
