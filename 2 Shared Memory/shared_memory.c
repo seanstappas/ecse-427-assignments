@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define MAX_KEY_SIZE 32
 #define MAX_VALUE_SIZE 256
@@ -126,7 +127,8 @@ int kv_store_write(char *key, char *value) {
 	}
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	int key_value_index = shared_memory->key_value_indices[pod_number] + 1; // TODO: think about incrementing and accessing this...
+	int key_value_index = shared_memory->key_value_indices[pod_number];
+	key_value_index = (key_value_index + 1) % POD_SIZE;
 
 	shared_memory->key_value_indices[pod_number] = key_value_index;
 
@@ -142,13 +144,27 @@ returns a copy of the value. It duplicates the string found in the store and ret
 is the responsibility of the calling function to free the memory allocated for the string. If no key-value pair
 is found, a NULL value is returned.
 */
-char *kv_store_read(char *key) {
+char *kv_store_read(char *key) { // TODO: Handle duplicates...
 	if (key == NULL)
-		return -1;
+		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 	int key_value_index = shared_memory->key_value_indices[pod_number];
-	return shared_memory->values[pod_number][key_value_index];
+
+	char *store_key;
+	
+	for (int i = 0; i < POD_SIZE; i++) {
+		store_key = shared_memory->keys[pod_number][key_value_index];
+		if (store_key == NULL)
+			return NULL;
+		if (strcmp(key, store_key) == 0) {
+			char *store_value = shared_memory->values[pod_number][key_value_index];
+			return strdup(store_value);
+		}
+		key_value_index = (key_value_index - 1) % POD_SIZE; // work your way backwards through indices
+	}
+
+	return NULL;
 }
 
 /*
@@ -156,7 +172,33 @@ The kv_store_read_all() function takes a key and returns all the values in the s
 returned if there is no records for the key.
 */
 char **kv_store_read_all(char *key) {
-	return NULL;
+	if (key == NULL)
+		return NULL;
+
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	
+	int number_of_values = 0;
+
+	for (int i = 0; i < POD_SIZE; i++) {
+		char *current_key = shared_memory->keys[pod_number][i];
+		if (strcmp(key, current_key) == 0) {
+			number_of_values++;
+		}
+	}
+
+	char *values = calloc(number_of_values * MAX_VALUE_SIZE, sizeof(char));
+	char **rows = malloc(number_of_values * sizeof(char*));
+
+	int j = 0;
+	for (int i = 0; i < POD_SIZE; i++) {
+		char *current_key = shared_memory->keys[pod_number][i];
+		if (strcmp(key, current_key) == 0) {
+			rows[j] = strdup(shared_memory->values[pod_number][i]);
+		}
+		j++;
+	}
+
+	return rows; // need to free(*rows) then free(rows) after
 }
 
 /*
@@ -178,10 +220,40 @@ int kv_store_cleanup(char *name) {
 
 int main(int argc, char **argv) { // TODO: Remove this in final code!
 	kv_store_create("/seanstappas");
-	if (argv[1] != NULL) {
-		if (argv[2] != NULL)
-			kv_store_write(argv[1], argv[2]);
-		printf("Read: %s\n", kv_store_read(argv[1]));
-	}
+	char *value;
+
+	kv_store_write("key1", "value1");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	kv_store_write("key2", "value2");
+	value = kv_store_read("key2");
+	printf("Read key2: %s\n", value);
+	free(value);
+
+	kv_store_write("key3", "value3");
+	value = kv_store_read("key3");
+	printf("Read key3: %s\n", value);
+	free(value);
+
+	kv_store_write("key4", "value4");
+	value = kv_store_read("key4");
+	printf("Read key4: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key2");
+	printf("Read key2: %s\n", value);
+	free(value);
+
+	kv_store_write("key1", "newvalue1");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
 	kv_store_cleanup("/seanstappas");
 }
