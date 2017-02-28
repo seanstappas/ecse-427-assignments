@@ -20,6 +20,7 @@ typedef struct {
 } SharedMemory;
 
 SharedMemory *shared_memory;
+int last_read_indices[NUMBER_OF_PODS];
 
 /*
 Simple hash function. Taken from:
@@ -99,6 +100,10 @@ int kv_store_create(char *name) {
 	}
 	close(fd);
 
+	for (int i = 0; i < NUMBER_OF_PODS; i++) {
+		last_read_indices[i] = -1;
+	}
+
 	return 0;
 }
 
@@ -128,7 +133,7 @@ int kv_store_write(char *key, char *value) {
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 	int key_value_index = shared_memory->key_value_indices[pod_number];
-	key_value_index = (key_value_index + 1) % POD_SIZE;
+	key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
 
 	shared_memory->key_value_indices[pod_number] = key_value_index;
 
@@ -151,17 +156,23 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 	int key_value_index = shared_memory->key_value_indices[pod_number];
 
+	int last_read_index = last_read_indices[pod_number];
+	if (last_read_index != -1) {
+		char *last_read_key = shared_memory->keys[pod_number][last_read_index];
+		if (strcmp(key, last_read_key) == 0) {
+			key_value_index = (last_read_index + 1) % POD_SIZE; // This is needed to cycle through all duplicate keys
+		}
+	}
+
 	char *store_key;
-	
 	for (int i = 0; i < POD_SIZE; i++) {
 		store_key = shared_memory->keys[pod_number][key_value_index];
-		if (store_key == NULL)
-			return NULL;
 		if (strcmp(key, store_key) == 0) {
 			char *store_value = shared_memory->values[pod_number][key_value_index];
+			last_read_indices[pod_number] = key_value_index;
 			return strdup(store_value);
 		}
-		key_value_index = (key_value_index - 1) % POD_SIZE; // work your way backwards through indices
+		key_value_index = (key_value_index + 1) % POD_SIZE; // work your way backwards through indices
 	}
 
 	return NULL;
@@ -186,19 +197,19 @@ char **kv_store_read_all(char *key) {
 		}
 	}
 
-	char *values = calloc(number_of_values * MAX_VALUE_SIZE, sizeof(char));
-	char **rows = malloc(number_of_values * sizeof(char*));
+	char **values = malloc(number_of_values * MAX_VALUE_SIZE);
 
 	int j = 0;
 	for (int i = 0; i < POD_SIZE; i++) {
 		char *current_key = shared_memory->keys[pod_number][i];
 		if (strcmp(key, current_key) == 0) {
-			rows[j] = strdup(shared_memory->values[pod_number][i]);
+			char *value = shared_memory->values[pod_number][i];
+			values[j] = strdup(value);
+			j++;
 		}
-		j++;
 	}
 
-	return rows; // need to free(*rows) then free(rows) after
+	return values; // need to free(*rows) then free(rows) after
 }
 
 /*
@@ -223,37 +234,70 @@ int main(int argc, char **argv) { // TODO: Remove this in final code!
 	char *value;
 
 	kv_store_write("key1", "value1");
+	printf("Write key1 -> value1\n");
 	value = kv_store_read("key1");
 	printf("Read key1: %s\n", value);
 	free(value);
 
-	kv_store_write("key2", "value2");
-	value = kv_store_read("key2");
-	printf("Read key2: %s\n", value);
+	kv_store_write("key1", "value2");
+	printf("Write key1 -> value2\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
 	free(value);
 
-	kv_store_write("key3", "value3");
-	value = kv_store_read("key3");
-	printf("Read key3: %s\n", value);
+	kv_store_write("key1", "value3");
+	printf("Write key1 -> value3\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
 	free(value);
 
-	kv_store_write("key4", "value4");
-	value = kv_store_read("key4");
-	printf("Read key4: %s\n", value);
+	kv_store_write("key1", "value4");
+	printf("Write key1 -> value4\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
 	free(value);
 
 	value = kv_store_read("key1");
 	printf("Read key1: %s\n", value);
 	free(value);
 
-	value = kv_store_read("key2");
-	printf("Read key2: %s\n", value);
-	free(value);
-
-	kv_store_write("key1", "newvalue1");
 	value = kv_store_read("key1");
 	printf("Read key1: %s\n", value);
 	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
+
+	char **all_values = kv_store_read_all("key1");
+	for (int i = 0; i < POD_SIZE; i++) {
+		if (all_values[i] == NULL)
+			break;
+		printf("read_all %d: %s\n", i, all_values[i]);
+		free(all_values[i]);
+	}
+
+	free(all_values);
 
 	kv_store_cleanup("/seanstappas");
 }
