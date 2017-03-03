@@ -7,10 +7,11 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <semaphore.h>
 
 #define MAX_KEY_SIZE 32
 #define MAX_VALUE_SIZE 256
-#define POD_SIZE 10
+#define POD_SIZE 256
 #define NUMBER_OF_PODS 256 // k pods. could be a multiple of 16
 
 typedef struct {
@@ -21,6 +22,8 @@ typedef struct {
 
 SharedMemory *shared_memory;
 int last_read_indices[NUMBER_OF_PODS];
+sem_t *mutex;
+sem_t *db;
 
 /*
 Simple hash function. Taken from:
@@ -40,12 +43,12 @@ unsigned long hash(unsigned char *str)
 /*
 Readers and writers problem (Section 2.5.2 of textbook)
 */
-typedef int semaphore; /* use your imagination */
-semaphore mutex = 1; /* controls access to rc */
-semaphore db = 1; /* controls access to the database */
-int rc = 0; /* # of processes reading or wanting to */
-void reader(void)
-{
+//typedef int semaphore; /* use your imagination */
+//semaphore mutex = 1; /* controls access to rc */
+//semaphore db = 1; /* controls access to the database */
+//int rc = 0; /* # of processes reading or wanting to */
+//void reader(void)
+//{
 	//while (TRUE) { /* repeat forever */
 	//	down(&mutex); /* get exclusive access to rc */
 	//	rc = rc + 1; /* one reader more now */
@@ -58,16 +61,16 @@ void reader(void)
 	//	up(&mutex); /* release exclusive access to rc */
 	//	use data read(); /* noncr itical region */
 	//}
-}
-void writer(void)
-{
+//}
+//void writer(void)
+//{
 	//while (TRUE) { /* repeat forever */
 	//	think up data(); /* noncr itical region */
 	//	down(&db); /* get exclusive access */
 	//	wr ite data base(); /* update the data */
 	//	up(&db); /* release exclusive access */
 	//}
-}
+//}
 
 /*
 The kv_store_create() function creates a store if it is not yet created or opens the store if it is
@@ -102,6 +105,17 @@ int kv_store_create(char *name) {
 
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
 		last_read_indices[i] = -1;
+	}
+
+	mutex = sem_open("seanstappas_mutex", O_CREAT);
+	if (mutex == SEM_FAILED) {
+		perror("sem_open mutex failed");
+		return -1;
+	}
+	db = sem_open("seanstappas_db", O_CREAT);
+	if (db == SEM_FAILED) {
+		perror("sem_open db failed");
+		return -1;
 	}
 
 	return 0;
@@ -181,6 +195,7 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 /*
 The kv_store_read_all() function takes a key and returns all the values in the store. A NULL is
 returned if there is no records for the key.
+Returns 0 on success, -1 on failure.
 */
 char **kv_store_read_all(char *key) {
 	if (key == NULL)
@@ -213,19 +228,38 @@ char **kv_store_read_all(char *key) {
 }
 
 /*
-Unmaps and unlinks the shared memory.
+Unmaps and unlinks the shared memory. Also deletes all named semaphores.
 */
-int kv_store_cleanup(char *name) {
-	int unmap_status = munmap(shared_memory, sizeof(SharedMemory));
-	if (unmap_status == -1) {
+int kv_delete_db(char *name) {
+	if (munmap(shared_memory, sizeof(SharedMemory)) == -1) {
 		perror("munmap failed");
 		return -1;
 	}
-	int unlink_status = shm_unlink(name);
-	if (unlink_status == -1) {
+	if (shm_unlink(name) == -1) {
 		perror("unlink status failed");
 		return -1;
 	}
+
+	if (sem_close(mutex) == -1) {
+		perror("sem_close mutex failed");
+		return -1;
+	}
+
+	if (sem_close(db) == -1) {
+		perror("sem_close db failed");
+		return -1;
+	}
+
+	if (sem_unlink("seanstappas_mutex") == -1) {
+		perror("sem_unlink mutex failed");
+		return -1;
+	}
+
+	if (sem_unlink("seanstappas_db") == -1) {
+		perror("sem_unlink db failed");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -299,5 +333,5 @@ int main(int argc, char **argv) { // TODO: Remove this in final code!
 
 	free(all_values);
 
-	kv_store_cleanup("/seanstappas");
+	kv_delete_db("/seanstappas");
 }
