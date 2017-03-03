@@ -229,16 +229,10 @@ char **kv_store_read_all(char *key) {
 
 	char **values = malloc(number_of_values * MAX_VALUE_SIZE);
 
-	int j = 0;
-	int index = (shared_memory->last_write_indices[pod_number] + 1) % current_pod_size; // FIFO
-	for (int i = 0; i < current_pod_size; i++) {
-		char *current_key = shared_memory->keys[pod_number][index];
-		if (strcmp(key, current_key) == 0) {
-			char *value = shared_memory->values[pod_number][index];
-			values[j] = strdup(value);
-			j++;
-		}
-		index = (index + 1) % current_pod_size;
+	last_read_indices[pod_number] = -1; // Reset read index (to get full FIFO list) Is this the right way??
+
+	for (int i = 0; i < number_of_values; i++) {
+		values[i] = kv_store_read(key);
 	}
 
 	return values; // need to free(*rows) then free(rows) after
