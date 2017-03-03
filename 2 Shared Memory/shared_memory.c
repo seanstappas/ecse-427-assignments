@@ -17,13 +17,16 @@
 typedef struct {
 	char keys[NUMBER_OF_PODS][POD_SIZE][MAX_KEY_SIZE];
 	char values[NUMBER_OF_PODS][POD_SIZE][MAX_VALUE_SIZE];
-	int key_value_indices[NUMBER_OF_PODS];
+	int last_write_indices[NUMBER_OF_PODS]; // keeps track of the last written kv pair
+	int current_pod_sizes[NUMBER_OF_PODS]; // current size of every pod (better read performance with this)
 } SharedMemory;
 
 SharedMemory *shared_memory;
-int last_read_indices[NUMBER_OF_PODS];
+int last_read_indices[NUMBER_OF_PODS]; // keeps track of the last read index. TODO: keep this in shared memory? Probably not...
+// Question: How to handle interleaved read and write to duplicate keys? Keep reading the first value?
 sem_t *mutex;
-sem_t *db;
+sem_t *db; // multiple writers can write to different pods (as long as each writer is in different pod)!!
+// TODO: put "rc" counter in shared memory?
 
 /*
 Simple hash function. Taken from:
@@ -107,12 +110,12 @@ int kv_store_create(char *name) {
 		last_read_indices[i] = -1;
 	}
 
-	mutex = sem_open("seanstappas_mutex", O_CREAT);
+	mutex = sem_open("seanstappas_mutex", O_CREAT, S_IRWXU, 1);
 	if (mutex == SEM_FAILED) {
 		perror("sem_open mutex failed");
 		return -1;
 	}
-	db = sem_open("seanstappas_db", O_CREAT);
+	db = sem_open("seanstappas_db", O_CREAT, S_IRWXU, 1);
 	if (db == SEM_FAILED) {
 		perror("sem_open db failed");
 		return -1;
@@ -146,13 +149,20 @@ int kv_store_write(char *key, char *value) {
 	}
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	int key_value_index = shared_memory->key_value_indices[pod_number];
-	key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
+	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
+	if (current_pod_size < POD_SIZE)
+		shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
 
-	shared_memory->key_value_indices[pod_number] = key_value_index;
+	int key_value_index = shared_memory->last_write_indices[pod_number];
+	if (current_pod_size != 0)
+		key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
+
+	shared_memory->last_write_indices[pod_number] = key_value_index;
 
 	strcpy(shared_memory->keys[pod_number][key_value_index], key);
 	strcpy(shared_memory->values[pod_number][key_value_index], value);
+
+	last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)
 
 	return 0;
 }
@@ -168,25 +178,29 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	int key_value_index = shared_memory->key_value_indices[pod_number];
+	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
+
+	int last_write_index = shared_memory->last_write_indices[pod_number];
+	int key_value_index = (last_write_index + 1) % current_pod_size;
 
 	int last_read_index = last_read_indices[pod_number];
 	if (last_read_index != -1) {
 		char *last_read_key = shared_memory->keys[pod_number][last_read_index];
-		if (strcmp(key, last_read_key) == 0) {
-			key_value_index = (last_read_index + 1) % POD_SIZE; // This is needed to cycle through all duplicate keys
-		}
+		if (strcmp(key, last_read_key) == 0)
+			key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
+		else
+			last_read_indices[pod_number] = -1;
 	}
 
 	char *store_key;
-	for (int i = 0; i < POD_SIZE; i++) {
+	for (int i = 0; i < current_pod_size; i++) {
 		store_key = shared_memory->keys[pod_number][key_value_index];
 		if (strcmp(key, store_key) == 0) {
 			char *store_value = shared_memory->values[pod_number][key_value_index];
 			last_read_indices[pod_number] = key_value_index;
 			return strdup(store_value);
 		}
-		key_value_index = (key_value_index + 1) % POD_SIZE; // work your way backwards through indices
+		key_value_index = (key_value_index + 1) % current_pod_size; // work your way forwards through indices (FIFO)
 	}
 
 	return NULL;
@@ -202,10 +216,11 @@ char **kv_store_read_all(char *key) {
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
+	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 	
 	int number_of_values = 0;
 
-	for (int i = 0; i < POD_SIZE; i++) {
+	for (int i = 0; i < current_pod_size; i++) {
 		char *current_key = shared_memory->keys[pod_number][i];
 		if (strcmp(key, current_key) == 0) {
 			number_of_values++;
@@ -215,13 +230,15 @@ char **kv_store_read_all(char *key) {
 	char **values = malloc(number_of_values * MAX_VALUE_SIZE);
 
 	int j = 0;
-	for (int i = 0; i < POD_SIZE; i++) {
-		char *current_key = shared_memory->keys[pod_number][i];
+	int index = (shared_memory->last_write_indices[pod_number] + 1) % current_pod_size; // FIFO
+	for (int i = 0; i < current_pod_size; i++) {
+		char *current_key = shared_memory->keys[pod_number][index];
 		if (strcmp(key, current_key) == 0) {
-			char *value = shared_memory->values[pod_number][i];
+			char *value = shared_memory->values[pod_number][index];
 			values[j] = strdup(value);
 			j++;
 		}
+		index = (index + 1) % current_pod_size;
 	}
 
 	return values; // need to free(*rows) then free(rows) after
