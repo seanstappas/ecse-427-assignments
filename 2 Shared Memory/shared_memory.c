@@ -8,25 +8,28 @@
 #include <string.h>
 #include <stdlib.h>
 #include <semaphore.h>
+#include <signal.h>
 
 #define MAX_KEY_SIZE 32
 #define MAX_VALUE_SIZE 256
 #define POD_SIZE 256
 #define NUMBER_OF_PODS 256 // k pods. could be a multiple of 16
 
+const char *SEMAPHORE_MUTEX_PREFIX = "/seanstappas_mutex_";
+const char *SEMAPHORE_DB_PREFIX = "/seanstappas_db_";
+
 typedef struct {
 	char keys[NUMBER_OF_PODS][POD_SIZE][MAX_KEY_SIZE];
 	char values[NUMBER_OF_PODS][POD_SIZE][MAX_VALUE_SIZE];
 	int last_write_indices[NUMBER_OF_PODS]; // keeps track of the last written kv pair
 	int current_pod_sizes[NUMBER_OF_PODS]; // current size of every pod (better read performance with this)
+	int number_of_readers[NUMBER_OF_PODS];
 } SharedMemory;
 
 SharedMemory *shared_memory;
-int last_read_indices[NUMBER_OF_PODS]; // keeps track of the last read index. TODO: keep this in shared memory? Probably not...
-// Question: How to handle interleaved read and write to duplicate keys? Keep reading the first value?
-sem_t *mutex;
-sem_t *db; // multiple writers can write to different pods (as long as each writer is in different pod)!!
-// TODO: put "rc" counter in shared memory?
+int last_read_indices[NUMBER_OF_PODS]; // keeps track of the last read index.
+sem_t *mutexes[NUMBER_OF_PODS];
+sem_t *dbs[NUMBER_OF_PODS]; // multiple writers can write to different pods (as long as each writer is in different pod)!!
 
 /*
 Simple hash function. Taken from:
@@ -106,19 +109,25 @@ int kv_store_create(char *name) {
 	}
 	close(fd);
 
+	// Semaphore creation
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
 		last_read_indices[i] = -1;
-	}
 
-	mutex = sem_open("seanstappas_mutex", O_CREAT, S_IRWXU, 1);
-	if (mutex == SEM_FAILED) {
-		perror("sem_open mutex failed");
-		return -1;
-	}
-	db = sem_open("seanstappas_db", O_CREAT, S_IRWXU, 1);
-	if (db == SEM_FAILED) {
-		perror("sem_open db failed");
-		return -1;
+		char mutex_semaphore_name[22];
+		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
+		mutexes[i] = sem_open(mutex_semaphore_name, O_CREAT, S_IRWXU, 1);
+		if (mutexes[i] == SEM_FAILED) {
+			perror("sem_open mutex failed");
+			return -1;
+		}
+
+		char db_semaphore_name[22];
+		sprintf(db_semaphore_name, "%s%d", SEMAPHORE_DB_PREFIX, i);
+		dbs[i] = sem_open(db_semaphore_name, O_CREAT, S_IRWXU, 1);
+		if (dbs[i] == SEM_FAILED) {
+			perror("sem_open db failed");
+			return -1;
+		}
 	}
 
 	return 0;
@@ -149,20 +158,25 @@ int kv_store_write(char *key, char *value) {
 	}
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
+
+	// Entry protocol
+	sem_t *db = dbs[pod_number];
+	sem_wait(db);
+
+	// Critical section
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 	if (current_pod_size < POD_SIZE)
 		shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
-
 	int key_value_index = shared_memory->last_write_indices[pod_number];
 	if (current_pod_size != 0)
 		key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
-
 	shared_memory->last_write_indices[pod_number] = key_value_index;
-
 	strcpy(shared_memory->keys[pod_number][key_value_index], key);
 	strcpy(shared_memory->values[pod_number][key_value_index], value);
-
 	last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)
+
+	// Exit protocol
+	sem_post(db);
 
 	return 0;
 }
@@ -178,11 +192,24 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 
+	// Entry protocol
+	sem_t *mutex = mutexes[pod_number];
+	sem_wait(mutex);
+	int rc = shared_memory->number_of_readers[pod_number];
+	rc++;
+	shared_memory->number_of_readers[pod_number] = rc;
+	sem_t *db = dbs[pod_number];
+	if (rc == 1) {
+		sem_wait(db);
+	}
+	sem_post(mutex);
+
+	// Critical section
+	char *return_value = NULL;
+	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 	int last_write_index = shared_memory->last_write_indices[pod_number];
 	int key_value_index = (last_write_index + 1) % current_pod_size;
-
 	int last_read_index = last_read_indices[pod_number];
 	if (last_read_index != -1) {
 		char *last_read_key = shared_memory->keys[pod_number][last_read_index];
@@ -191,19 +218,28 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 		else
 			last_read_indices[pod_number] = -1;
 	}
-
 	char *store_key;
 	for (int i = 0; i < current_pod_size; i++) {
 		store_key = shared_memory->keys[pod_number][key_value_index];
 		if (strcmp(key, store_key) == 0) {
 			char *store_value = shared_memory->values[pod_number][key_value_index];
 			last_read_indices[pod_number] = key_value_index;
-			return strdup(store_value);
+			return_value = strdup(store_value);
+			break;
 		}
 		key_value_index = (key_value_index + 1) % current_pod_size; // work your way forwards through indices (FIFO)
 	}
 
-	return NULL;
+	// Exit protocol
+	sem_wait(mutex);
+	rc = shared_memory->number_of_readers[pod_number];
+	rc--;
+	shared_memory->number_of_readers[pod_number] = rc;
+	if (rc == 0)
+		sem_post(db);
+	sem_post(mutex);
+
+	return return_value;
 }
 
 /*
@@ -216,26 +252,52 @@ char **kv_store_read_all(char *key) {
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
-	
-	int number_of_values = 0;
 
+	// Entry protocol
+	sem_t *mutex = mutexes[pod_number];
+	sem_wait(mutex);
+	int rc = shared_memory->number_of_readers[pod_number];
+	rc++;
+	shared_memory->number_of_readers[pod_number] = rc;
+	sem_t *db = dbs[pod_number];
+	if (rc == 1)
+		sem_wait(db);
+	sem_post(mutex);
+
+	// Critical section
+	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
+	int number_of_values = 0;
 	for (int i = 0; i < current_pod_size; i++) {
 		char *current_key = shared_memory->keys[pod_number][i];
 		if (strcmp(key, current_key) == 0) {
 			number_of_values++;
 		}
 	}
-
 	char **values = malloc(number_of_values * MAX_VALUE_SIZE);
-
-	last_read_indices[pod_number] = -1; // Reset read index (to get full FIFO list) Is this the right way??
-
-	for (int i = 0; i < number_of_values; i++) {
-		values[i] = kv_store_read(key);
+	int last_write_index = shared_memory->last_write_indices[pod_number];
+	int read_index = (last_write_index + 1) % current_pod_size;
+	last_read_indices[pod_number] = -1; // Reset read index (to get full FIFO list)
+	int j = 0;
+	for (int i = 0; i < current_pod_size && j < number_of_values; i++) {
+		char *store_key = shared_memory->keys[pod_number][read_index];
+		if (strcmp(key, store_key) == 0) {
+			char *store_value = shared_memory->values[pod_number][read_index];
+			values[j] = strdup(store_value);
+			j++;
+		}
+		read_index = (read_index + 1) % current_pod_size;
 	}
 
-	return values; // need to free(*rows) then free(rows) after
+	// Exit protocol
+	sem_wait(mutex);
+	rc = shared_memory->number_of_readers[pod_number];
+	rc--;
+	shared_memory->number_of_readers[pod_number] = rc;
+	if (rc == 0)
+		sem_post(db);
+	sem_post(mutex);
+
+	return values;
 }
 
 /*
@@ -250,32 +312,66 @@ int kv_delete_db(char *name) {
 		perror("unlink status failed");
 		return -1;
 	}
+	
+	for (int i = 0; i < NUMBER_OF_PODS; i++) {
+		if (sem_close(mutexes[i]) == -1) {
+			perror("sem_close mutex failed");
+			return -1;
+		}
 
-	if (sem_close(mutex) == -1) {
-		perror("sem_close mutex failed");
-		return -1;
-	}
+		if (sem_close(dbs[i]) == -1) {
+			perror("sem_close db failed");
+			return -1;
+		}
 
-	if (sem_close(db) == -1) {
-		perror("sem_close db failed");
-		return -1;
-	}
+		char mutex_semaphore_name[22];
+		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
+		if (sem_unlink(mutex_semaphore_name) == -1) {
+			perror("sem_unlink mutex failed");
+			return -1;
+		}
 
-	if (sem_unlink("seanstappas_mutex") == -1) {
-		perror("sem_unlink mutex failed");
-		return -1;
-	}
-
-	if (sem_unlink("seanstappas_db") == -1) {
-		perror("sem_unlink db failed");
-		return -1;
+		char db_semaphore_name[22];
+		sprintf(db_semaphore_name, "%s%d", SEMAPHORE_DB_PREFIX, i);
+		if (sem_unlink(db_semaphore_name) == -1) {
+			perror("sem_unlink db failed");
+			return -1;
+		}
 	}
 
 	return 0;
 }
 
-int main(int argc, char **argv) { // TODO: Remove this in final code!
-	kv_store_create("/seanstappas");
+
+/*
+* Handler for the SIGINT signal (Ctrl-C).
+*/
+
+static void handlerSIGINT(int sig) {
+	if (sig == SIGINT) {
+		kv_delete_db("/seanstappas");
+	}
+}
+
+void infinite_write() {
+	while (1) {
+		kv_store_write("key1", "value1");
+		printf("Write key1 value1\n");
+		sleep(1);
+	}
+}
+
+void infinite_read() {
+	while (1) {
+		char *value = kv_store_read("key1");
+		printf("Read key1: %s\n", value);
+		free(value);
+		sleep(1);
+	}
+}
+
+
+void test_all() {
 	char *value;
 
 	kv_store_write("key1", "value1");
@@ -343,6 +439,18 @@ int main(int argc, char **argv) { // TODO: Remove this in final code!
 	}
 
 	free(all_values);
+}
+
+int main(int argc, char **argv) { // TODO: Remove this in final code!
+	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
+		printf("ERROR: Could not bind SIGINT signal handler\n");
+		exit(EXIT_FAILURE);
+	}
+	kv_store_create("/seanstappas");
+
+	//infinite_write();
+	//infinite_read();
+	test_all();
 
 	kv_delete_db("/seanstappas");
 }
