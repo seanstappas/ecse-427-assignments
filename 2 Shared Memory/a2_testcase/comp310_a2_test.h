@@ -19,10 +19,10 @@
 #include "a2_lib.h"
 //LEAVE MAX KEYS as twice the number of pods
 #define __TEST_MAX_KEY__  256
-#define __TEST_MAX_KEY_SIZE__ 31
+#define __TEST_MAX_KEY_SIZE__ 32
 #define __TEST_MAX_DATA_LENGTH__ 256
 #define __TEST_MAX_POD_ENTRY__ 256
-#define __TEST_SHARED_MEM_NAME__ "/GTX_1080_TI"
+#define __TEST_SHARED_MEM_NAME__ "/seanstappas"
 #define __TEST_SHARED_SEM_NAME__ "/ONLY_TEARS"
 #define __TEST_FORK_NUM__ 4
 #define RUN_ITERATIONS 2000
