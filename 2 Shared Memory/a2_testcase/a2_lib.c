@@ -1,36 +1,8 @@
-#define _XOPEN_SOURCE 700
 
-#include <sys/mman.h>
-#include <sys/stat.h>        /* For mode constants */
-#include <fcntl.h>           /* For O_* constants */
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
-#include <semaphore.h>
-#include <signal.h>
-
-#define MAX_KEY_SIZE 31
-#define MAX_VALUE_SIZE 256
-#define POD_SIZE 256
-#define NUMBER_OF_PODS 256 // k pods. could be a multiple of 16
+#include "a2_lib.h"
 
 const char *SEMAPHORE_MUTEX_PREFIX = "/seanstappas_mutex_";
 const char *SEMAPHORE_DB_PREFIX = "/seanstappas_db_";
-
-typedef struct {
-	char keys[NUMBER_OF_PODS][POD_SIZE][MAX_KEY_SIZE];
-	char values[NUMBER_OF_PODS][POD_SIZE][MAX_VALUE_SIZE];
-	int last_write_indices[NUMBER_OF_PODS]; // keeps track of the last written kv pair
-	int current_pod_sizes[NUMBER_OF_PODS]; // current size of every pod (better read performance with this)
-	int number_of_readers[NUMBER_OF_PODS];
-} SharedMemory;
-
-SharedMemory *shared_memory;
-int last_read_indices[NUMBER_OF_PODS]; // keeps track of the last read index.
-sem_t *mutexes[NUMBER_OF_PODS];
-sem_t *dbs[NUMBER_OF_PODS]; // multiple writers can write to different pods (as long as each writer is in different pod)!!
-char *db_name;
 
 /*
 Simple hash function. Taken from:
@@ -46,38 +18,6 @@ unsigned long hash(char *str)
 
 	return hash;
 }
-
-/*
-Readers and writers problem (Section 2.5.2 of textbook)
-*/
-//typedef int semaphore; /* use your imagination */
-//semaphore mutex = 1; /* controls access to rc */
-//semaphore db = 1; /* controls access to the database */
-//int rc = 0; /* # of processes reading or wanting to */
-//void reader(void)
-//{
-	//while (TRUE) { /* repeat forever */
-	//	down(&mutex); /* get exclusive access to rc */
-	//	rc = rc + 1; /* one reader more now */
-	//	if (rc == 1) down(&db); /* if this is the first reader ... */
-	//	up(&mutex); /* release exclusive access to rc */
-	//	read data base(); /* access the data */
-	//	down(&mutex); /* get exclusive access to rc */
-	//	rc = rc −1; /* one reader few er now */
-	//	if (rc == 0) up(&db); /* if this is the last reader ... */
-	//	up(&mutex); /* release exclusive access to rc */
-	//	use data read(); /* noncr itical region */
-	//}
-//}
-//void writer(void)
-//{
-	//while (TRUE) { /* repeat forever */
-	//	think up data(); /* noncr itical region */
-	//	down(&db); /* get exclusive access */
-	//	wr ite data base(); /* update the data */
-	//	up(&db); /* release exclusive access */
-	//}
-//}
 
 /*
 The kv_store_create() function creates a store if it is not yet created or opens the store if it is
@@ -377,111 +317,113 @@ static void handlerSIGINT(int sig) {
 	}
 }
 
-// void infinite_write() {
-// 	while (1) {
-// 		kv_store_write("key1", "value1");
-// 		printf("Write key1 value1\n");
-// 		sleep(1);
-// 	}
-// }
+void infinite_write() {
+	while (1) {
+		kv_store_write("key1", "value1");
+		printf("Write key1 value1\n");
+		sleep(1);
+	}
+}
 
-// void infinite_read() {
-// 	while (1) {
-// 		char *value = kv_store_read("key1");
-// 		printf("Read key1: %s\n", value);
-// 		free(value);
-// 		sleep(1);
-// 	}
-// }
+void infinite_read() {
+	while (1) {
+		char *value = kv_store_read("key1");
+		printf("Read key1: %s\n", value);
+		free(value);
+		sleep(1);
+	}
+}
 
 
-// void test_all() {
-// 	char *value;
+void test_all() {
+	char *value;
 	
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
 
-// 	char **vals = kv_store_read_all("key1");
+	char **vals = kv_store_read_all("key1");
 
-// 	printf("Read all\n");
+	printf("Read all\n");
 
-// 	kv_store_write("key1", "value1");
-// 	printf("Write key1 -> value1\n");
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	kv_store_write("key1", "value1");
+	printf("Write key1 -> value1\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	kv_store_write("key1", "value2");
-// 	printf("Write key1 -> value2\n");
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	kv_store_write("key1", "value2");
+	printf("Write key1 -> value2\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	kv_store_write("key1", "value3");
-// 	printf("Write key1 -> value3\n");
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	kv_store_write("key1", "value3");
+	printf("Write key1 -> value3\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	kv_store_write("key1", "value4");
-// 	printf("Write key1 -> value4\n");
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	kv_store_write("key1", "value4");
+	printf("Write key1 -> value4\n");
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	value = kv_store_read("key1");
-// 	printf("Read key1: %s\n", value);
-// 	free(value);
+	value = kv_store_read("key1");
+	printf("Read key1: %s\n", value);
+	free(value);
 
-// 	char **all_values = kv_store_read_all("key1");
-// 	for (int i = 0; i < POD_SIZE; i++) {
-// 		if (all_values[i] == NULL)
-// 			break;
-// 		printf("read_all %d: %s\n", i, all_values[i]);
-// 		free(all_values[i]);
-// 	}
+	char **all_values = kv_store_read_all("key1");
+	for (int i = 0;; i++) {
+		if (all_values[i] == NULL)
+			break;
+		printf("read_all %d: %s\n", i, all_values[i]);
+		free(all_values[i]);
+	}
 
-// 	free(all_values);
-// }
+	free(all_values);
+}
 
-// int main(int argc, char **argv) { // TODO: Remove this in final code!
-// 	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
-// 		printf("ERROR: Could not bind SIGINT signal handler\n");
-// 		exit(EXIT_FAILURE);
-// 	}
-// 	kv_store_create("/seanstappas");
+int main(int argc, char **argv) { // TODO: Remove this in final code!
+	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
+		printf("ERROR: Could not bind SIGINT signal handler\n");
+		exit(EXIT_FAILURE);
+	}
+	kv_store_create("/seanstappas");
 
-// 	//infinite_write();
-// 	//infinite_read();
-// 	test_all();
+	//infinite_write();
+	//infinite_read();
+	for (int i = 0; i < 1000; i++) {
+		test_all();	
+	}
 
-// 	kv_delete_db();
-// }
+	kv_delete_db();
+}
