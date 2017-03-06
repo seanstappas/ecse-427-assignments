@@ -104,6 +104,7 @@ void get_patterns(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
             *pattern_length += 1;
         }
     }
+    printf("_SEANSTAPPAS: final pattern_length: %d\n", *pattern_length);
     for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){
         pattern_index = (k + min_index) % __TEST_MAX_POD_ENTRY__;
         if(patterns[k % *pattern_length] != expected_result[pattern_index][i]){
@@ -174,6 +175,7 @@ void read_all_test(char ** keys_buf, char *** data_buf,
         }
         if(total_read != pattern_length){
             printf("Invalid Read Length Based on Pattern Analysis\n");
+            printf("_SEANSTAPPAS: total_read = %d, pattern_length = %d\n", total_read, pattern_length);
             *errors += total_read > pattern_length ? total_read - pattern_length: pattern_length - total_read;
         }
         for(int k = 0; k < (total_read < pattern_length ? total_read : pattern_length); k++){
@@ -265,6 +267,7 @@ int main(){
     for(int i = 0; i < __TEST_MAX_KEY__; i++){
         get_patterns(expected_result, i, patterns, &pattern_length, &errors);
         read_order_test(expected_result, i, patterns, pattern_length, &errors);
+        printf("_SEANSTAPPAS: read_all iteration #%d\n", i);
         read_all_test(keys_buf, data_buf, expected_result, i, patterns, pattern_length, &errors);
     }
 
