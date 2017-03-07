@@ -1,4 +1,3 @@
-
 #include "a2_lib.h"
 
 const char *SEMAPHORE_MUTEX_PREFIX = "/seanstappas_mutex_";
@@ -110,15 +109,29 @@ int kv_store_write(char *key, char *value) {
 	// printf("write: Critical section\n");
 	// Critical section
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
-	if (current_pod_size < POD_SIZE)
-		shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
-	int key_value_index = shared_memory->last_write_indices[pod_number];
-	if (current_pod_size != 0)
-		key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
-	shared_memory->last_write_indices[pod_number] = key_value_index;
-	strcpy(shared_memory->keys[pod_number][key_value_index], key);
-	strcpy(shared_memory->values[pod_number][key_value_index], value);
-	last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)
+
+	int number_of_values = 0;
+	for (int i = 0; i < current_pod_size; i++) {
+		char *current_key = shared_memory->keys[pod_number][i];
+		if (strcmp(key, current_key) == 0) {
+			char *current_value = shared_memory->values[pod_number][i];
+			if (strcmp(value, current_value) == 0) {
+				number_of_values++;
+				break;
+			}
+		}
+	}
+	if (number_of_values == 0) { // key/value doesn't already exist in store
+		if (current_pod_size < POD_SIZE)
+			shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
+		int key_value_index = shared_memory->last_write_indices[pod_number];
+		if (current_pod_size != 0)
+			key_value_index = (key_value_index + 1) % POD_SIZE; // wrap-around (overwriting if necessary)
+		shared_memory->last_write_indices[pod_number] = key_value_index;
+		strcpy(shared_memory->keys[pod_number][key_value_index], key);
+		strcpy(shared_memory->values[pod_number][key_value_index], value);
+		last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)	
+	}
 
 	// printf("write: Exit protocol\n");
 	// Exit protocol
@@ -412,18 +425,18 @@ void test_all() {
 	free(all_values);
 }
 
-int main(int argc, char **argv) { // TODO: Remove this in final code!
-	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
-		printf("ERROR: Could not bind SIGINT signal handler\n");
-		exit(EXIT_FAILURE);
-	}
-	kv_store_create("/seanstappas");
+// int main(int argc, char **argv) { // TODO: Remove this in final code!
+// 	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
+// 		printf("ERROR: Could not bind SIGINT signal handler\n");
+// 		exit(EXIT_FAILURE);
+// 	}
+// 	kv_store_create("/seanstappas");
 
-	//infinite_write();
-	//infinite_read();
-	for (int i = 0; i < 1000; i++) {
-		test_all();	
-	}
+// 	//infinite_write();
+// 	//infinite_read();
+// 	for (int i = 0; i < 1000; i++) {
+// 		test_all();	
+// 	}
 
-	kv_delete_db();
-}
+// 	kv_delete_db();
+// }
