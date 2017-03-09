@@ -15,6 +15,7 @@ unsigned long hash(char *str)
 	while ((c = *str++))
 		hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
 
+	// printf("HASH: %lu\n", hash % NUMBER_OF_PODS);
 	return hash;
 }
 
@@ -130,7 +131,7 @@ int kv_store_write(char *key, char *value) {
 		shared_memory->last_write_indices[pod_number] = key_value_index;
 		strcpy(shared_memory->keys[pod_number][key_value_index], key);
 		strcpy(shared_memory->values[pod_number][key_value_index], value);
-		last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)	
+		last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)
 	}
 
 	// printf("write: Exit protocol\n");
@@ -236,14 +237,14 @@ char **kv_store_read_all(char *key) {
 	char **values = NULL;
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 	if (current_pod_size > 0) {
-		int number_of_values = 0;
+		int number_of_values = 1;
 		for (int i = 0; i < current_pod_size; i++) {
 			char *current_key = shared_memory->keys[pod_number][i];
 			if (strcmp(key, current_key) == 0) {
 				number_of_values++;
 			}
 		}
-		if (number_of_values > 0) {			
+		if (number_of_values > 0) {
 			values = malloc(number_of_values * MAX_VALUE_SIZE);
 			int last_write_index = shared_memory->last_write_indices[pod_number];
 			int read_index = (last_write_index + 1) % current_pod_size;
@@ -258,8 +259,10 @@ char **kv_store_read_all(char *key) {
 				}
 				read_index = (read_index + 1) % current_pod_size;
 			}
+			values[number_of_values - 1] = NULL;
 		}
 	}
+
 	// printf("read_all: Exit protocol\n");
 	// Exit protocol
 	sem_wait(mutex);
@@ -286,7 +289,7 @@ int kv_delete_db() {
 		perror("unlink status failed");
 		return -1;
 	}
-	
+
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
 		if (sem_close(mutexes[i]) == -1) {
 			perror("sem_close mutex failed");
@@ -350,79 +353,112 @@ void infinite_read() {
 
 void test_all() {
 	char *value;
-	
+
 	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
 
 	char **vals = kv_store_read_all("key1");
+	if (vals != NULL) {
+		for (int i = 0; vals[i] != NULL; i++) {
+			printf("Read %d: %s\n", i, vals[i]);
+			free(vals[i]);
+		}
+		free(vals);
+	}
 
 	printf("Read all\n");
 
-	kv_store_write("key1", "value1");
-	printf("Write key1 -> value1\n");
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
+	kv_store_write("fN7Y81yc006aAW5Uljl73NcCAjwh25", "Ft2uK7jZ9fd9ogKy88gx4HoxqFE54463UY6TnjM57zdmLZTSpt27pGNHI4lyYXFk84R3yMyNBVPL4k2w73r3PeIw9z7Fxhn0722OAfNXu7L7f64427B9QPRUMWs5r0y5PIs784wmnLbF73XN5DP63Vc7uZ0p1B4P870WnpD2859Y777LH0572fn1xag1bVsq0F1zVlUn0Hp50J7rTtrZzYXOdO47sBXWTDMApIN5XLlAuuY5kfRlHwVn84Ynk52");
+	printf("Write fN7Y81yc006aAW5Uljl73NcCAjwh25 -> Ft2uK7jZ9fd9ogKy88gx4HoxqFE54463UY6TnjM57zdmLZTSpt27pGNHI4lyYXFk84R3yMyNBVPL4k2w73r3PeIw9z7Fxhn0722OAfNXu7L7f64427B9QPRUMWs5r0y5PIs784wmnLbF73XN5DP63Vc7uZ0p1B4P870WnpD2859Y777LH0572fn1xag1bVsq0F1zVlUn0Hp50J7rTtrZzYXOdO47sBXWTDMApIN5XLlAuuY5kfRlHwVn84Ynk52\n");
+	value = kv_store_read("fN7Y81yc006aAW5Uljl73NcCAjwh25");
+	if (value != NULL) {
+		printf("Read fN7Y81yc006aAW5Uljl73NcCAjwh25: %s\n", value);
+		free(value);
+	}
 
 	kv_store_write("key1", "value2");
 	printf("Write key1 -> value2\n");
 	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
 
 	kv_store_write("key1", "value3");
 	printf("Write key1 -> value3\n");
 	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
 
 	kv_store_write("key1", "value4");
 	printf("Write key1 -> value4\n");
 	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	value = kv_store_read("key1");
-	printf("Read key1: %s\n", value);
-	free(value);
-
-	char **all_values = kv_store_read_all("key1");
-	for (int i = 0;; i++) {
-		if (all_values[i] == NULL)
-			break;
-		printf("read_all %d: %s\n", i, all_values[i]);
-		free(all_values[i]);
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
 	}
 
-	free(all_values);
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	value = kv_store_read("key1");
+	if (value != NULL) {
+		printf("Read key1: %s\n", value);
+		free(value);
+	}
+
+	char **all_values = kv_store_read_all("key1");
+	if (all_values != NULL) {
+		for (int i = 0; all_values[i] != NULL; i++) {
+			printf("read_all %d: %s\n", i, all_values[i]);
+			free(all_values[i]);
+		}
+		free(all_values);
+	}
 }
 
 // int main(int argc, char **argv) { // TODO: Remove this in final code!
@@ -434,8 +470,46 @@ void test_all() {
 
 // 	//infinite_write();
 // 	//infinite_read();
-// 	for (int i = 0; i < 1000; i++) {
-// 		test_all();	
+// 	// for (int i = 0; i < 1000; i++) {
+// 	// 	test_all();
+// 	// }
+
+// 	for (int i = 0; i < 256; i++) {
+// 		char key[32];
+// 		sprintf(key, "%s%d", "key", 0);
+// 		char value[256];
+// 		sprintf(value, "%s%d", "value", i);
+// 		printf("Write key%d -> value%d\n", 0, i);
+// 		kv_store_write(key, value);
+// 	}
+
+// 	for (int i = 0; i < 256; i++) {
+// 		char key[32];
+// 		sprintf(key, "%s%d", "key", 0);
+// 		char* value = kv_store_read(key);
+// 		if (value != NULL) {
+// 			printf("Read key%d -> %s\n", 0, value);
+// 			free(value);
+// 		}
+// 	}
+
+// 	for (int i = 0; i < 256; i++) {
+// 		char key[32];
+// 		sprintf(key, "%s%d", "key", 0);
+// 		char* value = kv_store_read(key);
+// 		if (value != NULL) {
+// 			printf("Read key%d -> %s\n", 0, value);
+// 			free(value);
+// 		}
+// 	}
+
+// 	char **all_values = kv_store_read_all("key0");
+// 	if (all_values != NULL) {
+// 		for (int i = 0; all_values[i] != NULL; i++) {
+// 			printf("read_all %d: %s\n", i, all_values[i]);
+// 			free(all_values[i]);
+// 		}
+// 		free(all_values);
 // 	}
 
 // 	kv_delete_db();

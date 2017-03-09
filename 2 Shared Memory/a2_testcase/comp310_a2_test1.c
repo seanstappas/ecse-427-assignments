@@ -86,6 +86,7 @@ void get_patterns(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
     int min_index = 0;
     int pattern_index;
     int invalid_flag = 0;
+    int all_same_flag = 1;
     memset(patterns, __TEST_MAX_POD_ENTRY__ + 1, __TEST_MAX_POD_ENTRY__ * sizeof(int));
     //Find Pattern
     for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){
@@ -104,28 +105,24 @@ void get_patterns(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
             *pattern_length += 1;
         }
     }
-    printf("_SEANSTAPPAS: final pattern_length: %d\n", *pattern_length);
-    for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){
-        pattern_index = (k + min_index) % __TEST_MAX_POD_ENTRY__;
-        if(patterns[k % *pattern_length] != expected_result[pattern_index][i]){
-            *errors += 1;
-            invalid_flag++;
+    //Test for extreme collision
+    for(int k = 1; k < __TEST_MAX_POD_ENTRY__; k++){
+        if(expected_result[0][i] != expected_result[k][i]){
+            all_same_flag = 0;
+            break;
         }
+        // printf("Expected(0,%d): %d, Expected(%d, %d): %d\n", i, expected_result[0][i], k, i, expected_result[k][i]);
     }
-    if(invalid_flag){
-        printf("Invalid Ordering ...\n");
-        errors++;
-        printf("Current Pattern: ");
-        for(int j = 0; j < __TEST_MAX_POD_ENTRY__; j++){
-            printf("%d, ", expected_result[j][i]);
-        }
-        printf("\n");
+    if(all_same_flag){
+        printf("Only returning a single value for each key. There should be multiple unless extreme collision. \n");
+        *errors += __TEST_MAX_POD_ENTRY__;
     }
 }
 
 void read_order_test(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
                       int i, int *patterns, int pattern_length, int *errors){
     //Check Read Order
+    int FIFO_TEST[pattern_length];
     int start_index = 0;
     for(int k = 0; k < pattern_length; k++){
         if(expected_result[0][i] == patterns[k]){
@@ -143,6 +140,18 @@ void read_order_test(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY_
             }
             printf("\n");
             break;
+        }
+    }   
+
+    memset(FIFO_TEST, -1, pattern_length * sizeof(int));
+    //Check FIFO
+    for(int i = 0; i < pattern_length; i++){
+        FIFO_TEST[__TEST_MAX_POD_ENTRY__ - 1 - patterns[i]] = 1;
+    }
+    for(int i = 0; i < pattern_length; i++){
+        if(FIFO_TEST[i] != 1){
+            printf("Error! Missing value %d This should have been read\n", __TEST_MAX_POD_ENTRY__ -1 - i);
+            errors++;
         }
     }
 }
@@ -175,7 +184,6 @@ void read_all_test(char ** keys_buf, char *** data_buf,
         }
         if(total_read != pattern_length){
             printf("Invalid Read Length Based on Pattern Analysis\n");
-            printf("_SEANSTAPPAS: total_read = %d, pattern_length = %d\n", total_read, pattern_length);
             *errors += total_read > pattern_length ? total_read - pattern_length: pattern_length - total_read;
         }
         for(int k = 0; k < (total_read < pattern_length ? total_read : pattern_length); k++){
@@ -267,7 +275,6 @@ int main(){
     for(int i = 0; i < __TEST_MAX_KEY__; i++){
         get_patterns(expected_result, i, patterns, &pattern_length, &errors);
         read_order_test(expected_result, i, patterns, pattern_length, &errors);
-        printf("_SEANSTAPPAS: read_all iteration #%d\n", i);
         read_all_test(keys_buf, data_buf, expected_result, i, patterns, pattern_length, &errors);
     }
 
