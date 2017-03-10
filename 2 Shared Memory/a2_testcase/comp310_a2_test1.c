@@ -13,14 +13,18 @@ void intHandler(int dummy) {
     exit(0);
 }
 
+/*
+    Write and read from the store. This is the ONLY place keys are created (keys_buf filled). Checks if read matches write.
+*/
 void read_write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__], int i, int *errors){
     int temp_flag = -1;
     char *temp;
-    generate_string(data_buf[i][elem_num[i]], __TEST_MAX_DATA_LENGTH__);
-    generate_key(keys_buf[i], __TEST_MAX_KEY_SIZE__, keys_buf, i+1);
+    generate_string(data_buf[i][elem_num[i]], __TEST_MAX_DATA_LENGTH__); // Create random data
+    generate_key(keys_buf[i], __TEST_MAX_KEY_SIZE__, keys_buf, i+1); // Create random key
 
-    temp_flag = kv_store_write(keys_buf[i], data_buf[i][elem_num[i]]);
-    temp = kv_store_read(keys_buf[i]);
+    temp_flag = kv_store_write(keys_buf[i], data_buf[i][elem_num[i]]); // Write random key -> random data
+    printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
+    temp = kv_store_read(keys_buf[i]); // Check if match
     if(temp == NULL || temp_flag != 0){
         printf("Gave NULL when value should be there or write failed\n");
         errors++;
@@ -32,6 +36,9 @@ void read_write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_
     free(temp);
 }
 
+/*
+    Write to the store. Only checks if write failed.
+*/
 void write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__], int k, int *errors){
     int temp_flag = -1;
     char *temp;
@@ -39,6 +46,7 @@ void write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__
     for(int i = 0; i < __TEST_MAX_KEY__; i++){
         generate_unique_data(data_buf[i][elem_num[i]], (rand() + 5) % __TEST_MAX_DATA_LENGTH__, data_buf[i], k);
         temp_flag = kv_store_write(keys_buf[i], data_buf[i][elem_num[i]]);
+        printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
         if(temp_flag != 0){
             printf("Write failed\n");
             *errors += 1;
@@ -48,22 +56,26 @@ void write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__
     printf("-----------Error Count: %d-----------\n\n", *errors);
 }
 
+/*
+    Read from store, checking if value should be there. (Assumes write_test already ran)
+*/
 void read_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__], 
                int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
                int k, int *errors){
     int temp_flag = -1;
     char *temp;
     printf("-----------Attempting Reads ROUND %d/%d-----------\n", k+1, __TEST_MAX_POD_ENTRY__);
-    for(int i = 0; i < __TEST_MAX_KEY__; i++){
-        temp = kv_store_read(keys_buf[i]);
+    for(int i = 0; i < __TEST_MAX_KEY__; i++){ // For each key...
+        temp = kv_store_read(keys_buf[i]); // Read key from store
+        printf("Read %s -> %s\n", keys_buf[i], temp);
         if(temp == NULL){
             printf("This should not return NULL. All these keys do have values\n");
             *errors += 1;
             continue;
         }
         temp_flag = -1;
-        for(int j = 0; j < elem_num[i]; j++){
-            if(strcmp(temp, data_buf[i][j]) == 0){
+        for(int j = 0; j < elem_num[i]; j++){ // Iterate through all values associated with the current key
+            if(strcmp(temp, data_buf[i][j]) == 0){ // If match found with read value, keep track of this value index
                 temp_flag = j;
                 break;
             }
@@ -72,31 +84,37 @@ void read_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__]
             printf("No Value %s Stored at key %s\n", temp, keys_buf[i]);
             *errors += 1;
         }else{
-            expected_result[k][i] = temp_flag;
+            expected_result[k][i] = temp_flag; // set to index of data (value#) (Value read from store)
+                        //  ^  ^
+                        //  ^  Key #
+                        //  Value # (Created value)
         }
         free(temp);
     }
     printf("-----------Error Count: %d-----------\n\n", *errors);
 }
 
+/*
+    ???
+*/
 void get_patterns(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
-                  int i, int *patterns, int *pattern_length, int *errors){
+                  int i, int *patterns, int *pattern_length, int *errors, char *current_key){
     *pattern_length = 1;
-    int min_pattern = __TEST_MAX_POD_ENTRY__ + 1;
+    int min_pattern = __TEST_MAX_POD_ENTRY__ + 1; // 257
     int min_index = 0;
     int pattern_index;
     int invalid_flag = 0;
     int all_same_flag = 1;
     memset(patterns, __TEST_MAX_POD_ENTRY__ + 1, __TEST_MAX_POD_ENTRY__ * sizeof(int));
     //Find Pattern
-    for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){
+    for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){ // For all values associated with current key...
         if(min_pattern > expected_result[k][i]){
-            min_pattern = expected_result[k][i];
-            min_index = k;
+            min_pattern = expected_result[k][i]; // Find min CREATED value index
+            min_index = k; // READ value index
         }
     }
     patterns[0] = min_pattern;
-    for(int k = 1; k < __TEST_MAX_POD_ENTRY__; k++){
+    for(int k = 1; k < __TEST_MAX_POD_ENTRY__; k++){ // For all values associated with current key...
         pattern_index = (k + min_index) % __TEST_MAX_POD_ENTRY__;
         if(patterns[0] == expected_result[pattern_index][i]){
             break;   
@@ -114,7 +132,7 @@ void get_patterns(int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__],
         // printf("Expected(0,%d): %d, Expected(%d, %d): %d\n", i, expected_result[0][i], k, i, expected_result[k][i]);
     }
     if(all_same_flag){
-        printf("Only returning a single value for each key. There should be multiple unless extreme collision. \n");
+        printf("Only returning a single value for each key (%s). There should be multiple unless extreme collision. \n", current_key);
         *errors += __TEST_MAX_POD_ENTRY__;
     }
 }
@@ -208,11 +226,11 @@ int main(){
     int errors = 0;
     char *temp;
     char **temp_all;
-    char ***data_buf;
-    char **keys_buf;
-    int elem_num[__TEST_MAX_KEY__];
-    int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__];
-    int patterns[__TEST_MAX_POD_ENTRY__];
+    char ***data_buf; // [key#][value#]:value (Filled in read_write_test and write_test)
+    char **keys_buf; // [key#]:key (Filled in read_write_test)
+    int elem_num[__TEST_MAX_KEY__]; // [key#]:number of values associated with key
+    int expected_result[__TEST_MAX_POD_ENTRY__][__TEST_MAX_KEY__]; // [value#][key#]:value# from data_buf (Associates read value with value created)
+    int patterns[__TEST_MAX_POD_ENTRY__]; // [value#]: ??
     int pattern_length = 0;
 
     srand(time(NULL));
@@ -259,21 +277,23 @@ int main(){
 
     printf("-----------Attempting Simple Read and Writes-----------\n");
     for(int i = 0; i < __TEST_MAX_KEY__; i++){
-        read_write_test(keys_buf, data_buf, elem_num, i, &errors);
+        read_write_test(keys_buf, data_buf, elem_num, i, &errors); // Create __TEST_MAX_KEY__ keys & __TEST_MAX_KEY__ values (and check read)
     }
     printf("-----------Error Count: %d-----------\n\n", errors);
 
     for(int k = 0; k < __TEST_MAX_POD_ENTRY__ - 1; k++){
-        write_test(keys_buf, data_buf, elem_num, k, &errors);
+        write_test(keys_buf, data_buf, elem_num, k, &errors); // For each key, create (__TEST_MAX_POD_ENTRY__ - 1) values
+                                                              // (now total __TEST_MAX_POD_ENTRY__ values for each key, including those from read_write_test)
     }
 
     for(int k = 0; k < __TEST_MAX_POD_ENTRY__; k++){
-        read_test(keys_buf, data_buf, elem_num, expected_result, k, &errors);
+        read_test(keys_buf, data_buf, elem_num, expected_result, k, &errors); // For each value (and each associated key), read key from store, keep track
+                                                                              // of returned value index (update expected_result)
     }
 
     printf("-----------Testing FIFO/Read Order/Read Alls -----------\n");
-    for(int i = 0; i < __TEST_MAX_KEY__; i++){
-        get_patterns(expected_result, i, patterns, &pattern_length, &errors);
+    for(int i = 0; i < __TEST_MAX_KEY__; i++){ // For each key
+        get_patterns(expected_result, i, patterns, &pattern_length, &errors, keys_buf[i]);
         read_order_test(expected_result, i, patterns, pattern_length, &errors);
         read_all_test(keys_buf, data_buf, expected_result, i, patterns, pattern_length, &errors);
     }
