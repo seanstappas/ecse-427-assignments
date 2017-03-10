@@ -23,7 +23,7 @@ void read_write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_
     generate_key(keys_buf[i], __TEST_MAX_KEY_SIZE__, keys_buf, i+1); // Create random key
 
     temp_flag = kv_store_write(keys_buf[i], data_buf[i][elem_num[i]]); // Write random key -> random data
-    printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
+    // printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
     temp = kv_store_read(keys_buf[i]); // Check if match
     if(temp == NULL || temp_flag != 0){
         printf("Gave NULL when value should be there or write failed\n");
@@ -46,7 +46,7 @@ void write_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__
     for(int i = 0; i < __TEST_MAX_KEY__; i++){
         generate_unique_data(data_buf[i][elem_num[i]], (rand() + 5) % __TEST_MAX_DATA_LENGTH__, data_buf[i], k);
         temp_flag = kv_store_write(keys_buf[i], data_buf[i][elem_num[i]]);
-        printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
+        // printf("Write %s -> %s\n", keys_buf[i], data_buf[i][elem_num[i]]);
         if(temp_flag != 0){
             printf("Write failed\n");
             *errors += 1;
@@ -67,7 +67,7 @@ void read_test(char **keys_buf, char ***data_buf, int elem_num[__TEST_MAX_KEY__]
     printf("-----------Attempting Reads ROUND %d/%d-----------\n", k+1, __TEST_MAX_POD_ENTRY__);
     for(int i = 0; i < __TEST_MAX_KEY__; i++){ // For each key...
         temp = kv_store_read(keys_buf[i]); // Read key from store
-        printf("Read %s -> %s\n", keys_buf[i], temp);
+        // printf("Read %s -> %s\n", keys_buf[i], temp);
         if(temp == NULL){
             printf("This should not return NULL. All these keys do have values\n");
             *errors += 1;
