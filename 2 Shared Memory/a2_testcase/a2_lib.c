@@ -18,6 +18,7 @@
 
 typedef struct {
 	char keys[NUMBER_OF_PODS][POD_CAPACITY][MAX_KEY_SIZE + 1]; // +1 for null termination
+	int last_read_indices[NUMBER_OF_PODS][POD_CAPACITY];
 	char values[NUMBER_OF_PODS][POD_CAPACITY][MAX_VALUE_SIZE + 1]; // +1 for null termination
 	int last_write_indices[NUMBER_OF_PODS]; // keeps track of the last written kv pair
 	int current_pod_sizes[NUMBER_OF_PODS]; // current size of every pod (better read performance with this)
@@ -25,9 +26,6 @@ typedef struct {
 } SharedMemory;
 
 SharedMemory *shared_memory;
-int last_read_indices[NUMBER_OF_PODS]; // keeps track of the last read index.
-int lastReadIndex;
-char *lastReadKey;
 sem_t *mutexes[NUMBER_OF_PODS];
 sem_t *dbs[NUMBER_OF_PODS]; // multiple writers can write to different pods (as long as each writer is in different pod)!!
 char *db_name;
@@ -93,7 +91,9 @@ int kv_store_create(char *name) {
 
 	// Semaphore creation
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
-		last_read_indices[i] = -1;
+		for (int j = 0; j < POD_CAPACITY; j++) {
+			shared_memory->last_read_indices[i][j] = -1;	
+		}
 
 		char mutex_semaphore_name[22];
 		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
@@ -111,9 +111,6 @@ int kv_store_create(char *name) {
 			return -1;
 		}
 	}
-
-	lastReadIndex = -1;
-	lastReadKey = calloc(1, sizeof(char) * MAX_KEY_SIZE + 1);
 
 	return 0;
 }
@@ -141,10 +138,10 @@ int kv_store_write(char *key, char *value) {
 	// if (strlen(value) >= MAX_VALUE_SIZE) { // TODO: truncate only the value? or value and key?
 	// 	printf("Max value size is %d", MAX_VALUE_SIZE);
 	// 	return -1;
-	// }hash_func
+	// }
 
-	// int pod_number = hash(key) % NUMBER_OF_PODS;
-	int pod_number = hash_func(key);
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	// int pod_number = hash_func(key);
 
 	// printf("write: Entry protocol\n");
 	// Entry protocol
@@ -155,18 +152,18 @@ int kv_store_write(char *key, char *value) {
 	// Critical section
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 
-	int number_of_values = 0;
+	int new_value = 1;
 	for (int i = 0; i < current_pod_size; i++) {
 		char *current_key = shared_memory->keys[pod_number][i];
 		if (strcmp(key, current_key) == 0) {
 			char *current_value = shared_memory->values[pod_number][i];
 			if (strcmp(value, current_value) == 0) {
-				number_of_values++;
+				new_value = 0;
 				break;
 			}
 		}
 	}
-	if (number_of_values == 0) { // key/value doesn't already exist in store
+	if (new_value) { // key/value doesn't already exist in store
 		if (current_pod_size < POD_CAPACITY)
 			shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
 		int key_value_index = shared_memory->last_write_indices[pod_number];
@@ -175,7 +172,14 @@ int kv_store_write(char *key, char *value) {
 		shared_memory->last_write_indices[pod_number] = key_value_index;
 		strncpy(shared_memory->keys[pod_number][key_value_index], key, MAX_KEY_SIZE);
 		strncpy(shared_memory->values[pod_number][key_value_index], value, MAX_VALUE_SIZE);
-		last_read_indices[pod_number] = -1; // reset read iteration order (needed if read/write is interleaved)
+
+		char *store_key;
+		for (int i = 0; i < current_pod_size; i++) {
+			store_key = shared_memory->keys[pod_number][i];
+			if (strcmp(key, store_key) == 0) {
+				shared_memory->last_read_indices[pod_number][i] = -1; // reset read iteration order (needed if read/write is interleaved)
+			}
+		}
 	}
 
 	// printf("write: Exit protocol\n");
@@ -195,8 +199,8 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 	if (key == NULL)
 		return NULL;
 
-	// int pod_number = hash(key) % NUMBER_OF_PODS;
-	int pod_number = hash_func(key);
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	// int pod_number = hash_func(key);
 
 	// printf("read: Entry protocol\n");
 	// Entry protocol
@@ -218,32 +222,34 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 	if (current_pod_size > 0) {
 		int last_write_index = shared_memory->last_write_indices[pod_number];
 		int key_value_index = (last_write_index + 1) % current_pod_size;
-		if (lastReadIndex != -1 && lastReadKey != NULL) {
-			if (strcmp(key, lastReadKey) == 0)
-				key_value_index = (lastReadIndex + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
-			else
-				lastReadIndex = -1;
 
-		}
-		// int last_read_index = last_read_indices[pod_number];
-		// if (last_read_index != -1) {
-		// 	char *last_read_key = shared_memory->keys[pod_number][last_read_index];
-		// 	if (strcmp(key, last_read_key) == 0)
-		// 		key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
-		// 	else
-		// 		last_read_indices[pod_number] = -1;
-		// }
+		int last_read_index = -1;
 		char *store_key;
 		for (int i = 0; i < current_pod_size; i++) {
 			store_key = shared_memory->keys[pod_number][key_value_index];
 			if (strcmp(key, store_key) == 0) {
-				char *store_value = shared_memory->values[pod_number][key_value_index];
-				last_read_indices[pod_number] = key_value_index;
-				lastReadIndex = key_value_index;
-				strncpy(lastReadKey, key, MAX_KEY_SIZE);
-				return_value = calloc(1, sizeof(char) * MAX_VALUE_SIZE + 1);
-				strncpy(return_value, store_value, MAX_VALUE_SIZE);
+				last_read_index = shared_memory->last_read_indices[pod_number][i];
 				break;
+			}
+		}
+
+		if (last_read_index != -1) {
+			key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
+		}
+
+		int searching = 1; // searching for first occurence of key
+		int first_index = -1;
+		for (int i = 0; i < current_pod_size; i++) {
+			store_key = shared_memory->keys[pod_number][key_value_index];
+			if (strcmp(key, store_key) == 0) {
+				if (searching) {
+					first_index = key_value_index;
+					char *store_value = shared_memory->values[pod_number][key_value_index];
+					return_value = calloc(1, sizeof(char) * MAX_VALUE_SIZE + 1);
+					strncpy(return_value, store_value, MAX_VALUE_SIZE);
+					searching = 0;
+				}
+				shared_memory->last_read_indices[pod_number][key_value_index] = first_index;
 			}
 			key_value_index = (key_value_index + 1) % current_pod_size; // work your way forwards through indices (FIFO)
 		}
@@ -272,8 +278,8 @@ char **kv_store_read_all(char *key) {
 	if (key == NULL || strlen(key) > MAX_KEY_SIZE)
 		return NULL;
 
-	// int pod_number = hash(key) % NUMBER_OF_PODS;
-	int pod_number = hash_func(key);
+	int pod_number = hash(key) % NUMBER_OF_PODS;
+	// int pod_number = hash_func(key);
 
 	// printf("read_all: Entry protocol\n");
 	// Entry protocol
@@ -304,12 +310,11 @@ char **kv_store_read_all(char *key) {
 			values = calloc(1, number_of_values * (MAX_VALUE_SIZE + 1)); // + 1 for null termination
 			int last_write_index = shared_memory->last_write_indices[pod_number];
 			int read_index = (last_write_index + 1) % current_pod_size;
-			last_read_indices[pod_number] = -1; // Reset read index (to get full FIFO list)
-			lastReadIndex = -1;
 			int j = 0;
 			for (int i = 0; i < current_pod_size && j < number_of_values; i++) {
 				char *store_key = shared_memory->keys[pod_number][read_index];
 				if (strcmp(key, store_key) == 0) {
+					shared_memory->last_read_indices[pod_number][read_index] = -1; // Reset read index (to get full FIFO list)
 					char *store_value = shared_memory->values[pod_number][read_index];
 					values[j] = calloc(1, sizeof(char) * MAX_VALUE_SIZE + 1);
 					strncpy(values[j], store_value, MAX_VALUE_SIZE);
@@ -372,10 +377,6 @@ int kv_delete_db() {
 			perror("sem_unlink db failed");
 			return -1;
 		}
-	}
-
-	if (lastReadKey != NULL) {
-		free(lastReadKey);
 	}
 
 	// printf("SEANSTAPPAS: db successfully cleaned up!\n");
