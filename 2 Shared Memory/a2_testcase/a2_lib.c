@@ -48,13 +48,13 @@ unsigned long hash(char *str)
 	return hash;
 }
 
-int hash_func(char *word){
-    int hashAddress = 5381;
-    for (int counter = 0; word[counter]!='\0'; counter++){
-        hashAddress = ((hashAddress << 5) + hashAddress) + word[counter];
-    }
-    return hashAddress % NUMBER_OF_PODS < 0 ? -hashAddress % NUMBER_OF_PODS : hashAddress % NUMBER_OF_PODS;
-}
+// int hash_func(char *word){
+//     int hashAddress = 5381;
+//     for (int counter = 0; word[counter]!='\0'; counter++){
+//         hashAddress = ((hashAddress << 5) + hashAddress) + word[counter];
+//     }
+//     return hashAddress % NUMBER_OF_PODS < 0 ? -hashAddress % NUMBER_OF_PODS : hashAddress % NUMBER_OF_PODS;
+// }
 
 /*
 The kv_store_create() function creates a store if it is not yet created or opens the store if it is
@@ -130,18 +130,7 @@ int kv_store_write(char *key, char *value) {
 	if (key == NULL || value == NULL)
 		return -1;
 
-	// if (strlen(key) >= MAX_KEY_SIZE) {
-	// 	printf("Max key size is %d", MAX_KEY_SIZE);
-	// 	return -1;
-	// }
-
-	// if (strlen(value) >= MAX_VALUE_SIZE) { // TODO: truncate only the value? or value and key?
-	// 	printf("Max value size is %d", MAX_VALUE_SIZE);
-	// 	return -1;
-	// }
-
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	// int pod_number = hash_func(key);
 
 	// printf("write: Entry protocol\n");
 	// Entry protocol
@@ -173,11 +162,10 @@ int kv_store_write(char *key, char *value) {
 		strncpy(shared_memory->keys[pod_number][key_value_index], key, MAX_KEY_SIZE);
 		strncpy(shared_memory->values[pod_number][key_value_index], value, MAX_VALUE_SIZE);
 
-		char *store_key;
 		for (int i = 0; i < current_pod_size; i++) {
-			store_key = shared_memory->keys[pod_number][i];
-			if (strcmp(key, store_key) == 0) {
-				shared_memory->last_read_indices[pod_number][i] = -1; // reset read iteration order (needed if read/write is interleaved)
+			int last_read_index = shared_memory->last_read_indices[pod_number][i];
+			if (last_read_index == key_value_index) { // Remove references to current index
+				 shared_memory->last_read_indices[pod_number][i] = -1;
 			}
 		}
 	}
@@ -195,12 +183,11 @@ returns a copy of the value. It duplicates the string found in the store and ret
 is the responsibility of the calling function to free the memory allocated for the string. If no key-value pair
 is found, a NULL value is returned.
 */
-char *kv_store_read(char *key) { // TODO: Handle duplicates...
+char *kv_store_read(char *key) {
 	if (key == NULL)
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	// int pod_number = hash_func(key);
 
 	// printf("read: Entry protocol\n");
 	// Entry protocol
@@ -226,17 +213,17 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 		int last_read_index = -1;
 		char *store_key;
 		for (int i = 0; i < current_pod_size; i++) {
-			store_key = shared_memory->keys[pod_number][key_value_index];
+			store_key = shared_memory->keys[pod_number][i];
 			if (strcmp(key, store_key) == 0) {
 				last_read_index = shared_memory->last_read_indices[pod_number][i];
-				break;
+				if (last_read_index != -1)
+					break;
 			}
 		}
 
 		if (last_read_index != -1) {
 			key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
 		}
-
 		int searching = 1; // searching for first occurence of key
 		int first_index = -1;
 		for (int i = 0; i < current_pod_size; i++) {
@@ -245,7 +232,7 @@ char *kv_store_read(char *key) { // TODO: Handle duplicates...
 				if (searching) {
 					first_index = key_value_index;
 					char *store_value = shared_memory->values[pod_number][key_value_index];
-					return_value = calloc(1, sizeof(char) * MAX_VALUE_SIZE + 1);
+					return_value = malloc(sizeof(char) * MAX_VALUE_SIZE + 1);
 					strncpy(return_value, store_value, MAX_VALUE_SIZE);
 					searching = 0;
 				}
@@ -307,16 +294,16 @@ char **kv_store_read_all(char *key) {
 			}
 		}
 		if (number_of_values > 0) {
-			values = calloc(1, number_of_values * (MAX_VALUE_SIZE + 1)); // + 1 for null termination
+			values = malloc(number_of_values * (MAX_VALUE_SIZE + 1)); // + 1 for null termination
 			int last_write_index = shared_memory->last_write_indices[pod_number];
 			int read_index = (last_write_index + 1) % current_pod_size;
 			int j = 0;
 			for (int i = 0; i < current_pod_size && j < number_of_values; i++) {
 				char *store_key = shared_memory->keys[pod_number][read_index];
 				if (strcmp(key, store_key) == 0) {
-					shared_memory->last_read_indices[pod_number][read_index] = -1; // Reset read index (to get full FIFO list)
+					// shared_memory->last_read_indices[pod_number][read_index] = -1; // Reset read index (to get full FIFO list)
 					char *store_value = shared_memory->values[pod_number][read_index];
-					values[j] = calloc(1, sizeof(char) * MAX_VALUE_SIZE + 1);
+					values[j] = malloc(sizeof(char) * MAX_VALUE_SIZE + 1);
 					strncpy(values[j], store_value, MAX_VALUE_SIZE);
 					j++;
 				}
@@ -524,6 +511,17 @@ void test_all() {
 	}
 }
 
+void read_all_test_sean() {
+	char **all_values = kv_store_read_all("key0");
+	if (all_values != NULL) {
+		for (int i = 0; all_values[i] != NULL; i++) {
+			printf("read_all %d: %s\n", i, all_values[i]);
+			free(all_values[i]);
+		}
+		free(all_values);
+	}
+}
+
 // int main(int argc, char **argv) { // TODO: Remove this in final code!
 // 	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
 // 		printf("ERROR: Could not bind SIGINT signal handler\n");
@@ -531,71 +529,41 @@ void test_all() {
 // 	}
 // 	kv_store_create("/seanstappas");
 
-// 	//infinite_write();
-// 	//infinite_read();
-// 	// for (int i = 0; i < 1000; i++) {
-// 	// 	test_all();
-// 	// }
-
-// 	for (int i = 0; i < 128; i++) {
+// 	for (int i = 0; i < 1024; i++) {
 // 		char key[32];
-// 		sprintf(key, "%s%d", "key", 0);
+// 		if (i % 2 == 0) {
+// 			sprintf(key, "%s%d", "key", 135);
+// 		} else {
+// 			sprintf(key, "%s%d", "key", 216);
+// 		}
+// 		// int pod_number = hash(key) % NUMBER_OF_PODS;
+// 		// printf("Pod number for %s: %d\n", key, pod_number);
 // 		char value[256];
 // 		sprintf(value, "%s%d", "value", i);
-// 		printf("Write key%d -> value%d\n", 0, i);
+// 		printf("Write %s -> %s\n", key, value);
 // 		kv_store_write(key, value);
 // 	}
 
-// 	for (int i = 0; i < 128; i++) {
-// 		char key[32];
-// 		sprintf(key, "%s%d", "key", 1);
-// 		char value[256];
-// 		sprintf(value, "%s%d", "value", i);
-// 		printf("Write key%d -> value%d\n", 1, i);
-// 		kv_store_write(key, value);
-// 	}
+// 	printf("-------------------READ-------------------\n");
 
-// 	for (int i = 0; i < 64; i++) {
+// 	for (int i = 0; i < 512; i++) {
+// 		int suffix = 216;
+// 		if (i % 2 == 0) {
+// 			suffix = 135;
+// 		}
+
 // 		char key[32];
-// 		sprintf(key, "%s%d", "key", 0);
+// 		sprintf(key, "%s%d", "key", suffix);
 // 		char* value = kv_store_read(key);
 // 		if (value != NULL) {
-// 			printf("Read key%d -> %s\n", 0, value);
+// 			printf("Read key%d -> %s\n", suffix, value);
 // 			free(value);
 // 		}
 // 	}
 
-// 	for (int i = 0; i < 64; i++) {
-// 		char key[32];
-// 		sprintf(key, "%s%d", "key", 1);
-// 		char* value = kv_store_read(key);
-// 		if (value != NULL) {
-// 			printf("Read key%d -> %s\n", 1, value);
-// 			free(value);
-// 		}
-// 	}
+// 	printf("----------------READ ALL----------------\n");
 
-// 	for (int i = 0; i < 64; i++) {
-// 		char key[32];
-// 		sprintf(key, "%s%d", "key", 0);
-// 		char* value = kv_store_read(key);
-// 		if (value != NULL) {
-// 			printf("Read key%d -> %s\n", 0, value);
-// 			free(value);
-// 		}
-// 	}
-
-// 	for (int i = 0; i < 64; i++) {
-// 		char key[32];
-// 		sprintf(key, "%s%d", "key", 1);
-// 		char* value = kv_store_read(key);
-// 		if (value != NULL) {
-// 			printf("Read key%d -> %s\n", 1, value);
-// 			free(value);
-// 		}
-// 	}
-
-// 	char **all_values = kv_store_read_all("key0");
+// 	char **all_values = kv_store_read_all("key216");
 // 	if (all_values != NULL) {
 // 		for (int i = 0; all_values[i] != NULL; i++) {
 // 			printf("read_all %d: %s\n", i, all_values[i]);
