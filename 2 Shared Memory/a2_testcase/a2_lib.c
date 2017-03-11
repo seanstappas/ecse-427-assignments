@@ -34,8 +34,11 @@ const char *SEMAPHORE_MUTEX_PREFIX = "/seanstappas_mutex_";
 const char *SEMAPHORE_DB_PREFIX = "/seanstappas_db_";
 
 /*
-	Simple hash function. Taken from:
-	http://www.cse.yorku.ca/~oz/hash.html
+	Simple hash function. Taken from: http://www.cse.yorku.ca/~oz/hash.html
+	------------------------------------------------------------------------------------------------
+	str: The string to be hashed.
+	------------------------------------------------------------------------------------------------
+	Returns: The hash value.
 */
 unsigned long hash(char *str)
 {
@@ -50,9 +53,9 @@ unsigned long hash(char *str)
 
 /*
 	Creates a shared memory store if not yet created or opens if already created.
-
+	------------------------------------------------------------------------------------------------
 	name: The name of the shared memory.
-
+	------------------------------------------------------------------------------------------------
 	Returns: 0 on success, -1 on failure.
 */
 int kv_store_create(char *name) {
@@ -105,8 +108,10 @@ int kv_store_create(char *name) {
 }
 
 /*
-	Writes key/value pair to the shared memory store.
-
+	Writes key/value pair to the shared memory store. If provided key or value size is greaterthan
+	permitted (MAX_KEY_SIZE and MAX_VALUE_SIZE, respectively), the key or value is truncated to fit
+	within the maximum. Only one writer is permitted at a time inside each pod.
+	------------------------------------------------------------------------------------------------
 	key: The key to be written.
 	value: The value to be written.
 
@@ -128,7 +133,7 @@ int kv_store_write(char *key, char *value) {
 		shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
 	int key_value_index = shared_memory->last_write_indices[pod_number];
 	if (current_pod_size != 0)
-		key_value_index = (key_value_index + 1) % POD_CAPACITY; // wrap-around (overwriting if necessary)
+		key_value_index = (key_value_index + 1) % POD_CAPACITY;
 	shared_memory->last_write_indices[pod_number] = key_value_index;
 	strncpy(shared_memory->keys[pod_number][key_value_index], key, MAX_KEY_SIZE);
 	strncpy(shared_memory->values[pod_number][key_value_index], value, MAX_VALUE_SIZE);
@@ -147,10 +152,11 @@ int kv_store_write(char *key, char *value) {
 }
 
 /*
-	Read by key from the shared memory store.
-
+	Read by key from the shared memory store. Multiple simultaneous readers are permitted within
+	each pod, as long as no writer is present.
+	------------------------------------------------------------------------------------------------
 	key: The key to be read.
-
+	------------------------------------------------------------------------------------------------
 	Returns: The value associated with the given key on success, NULL on failure.
 */
 char *kv_store_read(char *key) {
@@ -189,8 +195,8 @@ char *kv_store_read(char *key) {
 			}
 		}
 
-		if (last_read_index != -1) {
-			key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
+		if (last_read_index != -1) { // This is needed to cycle through all duplicate keys
+			key_value_index = (last_read_index + 1) % current_pod_size;
 		}
 		int searching = 1; // Searching for first occurence of key
 		int first_index = -1;
@@ -206,7 +212,7 @@ char *kv_store_read(char *key) {
 				}
 				shared_memory->last_read_indices[pod_number][key_value_index] = first_index;
 			}
-			key_value_index = (key_value_index + 1) % current_pod_size; // work your way forwards through indices (FIFO)
+			key_value_index = (key_value_index + 1) % current_pod_size;
 		}
 	}
 
@@ -224,10 +230,11 @@ char *kv_store_read(char *key) {
 }
 
 /*
-	Read all values associated with given key in the shared memory store.
-
+	Read all values associated with given key in the shared memory store. Multiple simultaneous 
+	readers are permitted within each pod, as long as no writer is present.
+	------------------------------------------------------------------------------------------------
 	key: The key to be read.
-
+	------------------------------------------------------------------------------------------------
 	Returns: All values associated with key on success, NULL on failure.
 */
 char **kv_store_read_all(char *key) {
@@ -292,8 +299,8 @@ char **kv_store_read_all(char *key) {
 }
 
 /*
-	Unmaps and unlinks the shared memory. Also deletes all named semaphores.
-
+	Unmaps and unlinks the shared memory. Also closes and unlinks all named semaphores.
+	------------------------------------------------------------------------------------------------
 	Returns: 0 on success, -1 on failure.
 */
 int kv_delete_db() {
