@@ -17,25 +17,25 @@
 #define NUMBER_OF_PODS 256 // total number of pods
 
 typedef struct {
-	char keys[NUMBER_OF_PODS][POD_CAPACITY][MAX_KEY_SIZE + 1]; // +1 for null termination
-	int last_read_indices[NUMBER_OF_PODS][POD_CAPACITY];
-	char values[NUMBER_OF_PODS][POD_CAPACITY][MAX_VALUE_SIZE + 1]; // +1 for null termination
+	char keys[NUMBER_OF_PODS][POD_CAPACITY][MAX_KEY_SIZE + 1]; // keys in the store, indexed by pod number and index within pod
+	char values[NUMBER_OF_PODS][POD_CAPACITY][MAX_VALUE_SIZE + 1]; // values in the store, indexed by pod number and index within pod
+	int last_read_indices[NUMBER_OF_PODS][POD_CAPACITY]; // last read index for each key (in every pod)
 	int last_write_indices[NUMBER_OF_PODS]; // keeps track of the last written kv pair
 	int current_pod_sizes[NUMBER_OF_PODS]; // current size of every pod (better read performance with this)
-	int number_of_readers[NUMBER_OF_PODS];
+	int number_of_readers[NUMBER_OF_PODS]; // needed to implement Readers & Writers algorithm within each pod
 } SharedMemory;
 
 SharedMemory *shared_memory;
 sem_t *mutexes[NUMBER_OF_PODS];
-sem_t *dbs[NUMBER_OF_PODS]; // multiple writers can write to different pods (as long as each writer is in different pod)!!
+sem_t *dbs[NUMBER_OF_PODS];
 char *db_name;
 
 const char *SEMAPHORE_MUTEX_PREFIX = "/seanstappas_mutex_";
 const char *SEMAPHORE_DB_PREFIX = "/seanstappas_db_";
 
 /*
-Simple hash function. Taken from:
-http://www.cse.yorku.ca/~oz/hash.html
+	Simple hash function. Taken from:
+	http://www.cse.yorku.ca/~oz/hash.html
 */
 unsigned long hash(char *str)
 {
@@ -48,21 +48,10 @@ unsigned long hash(char *str)
 	return hash;
 }
 
-// int hash_func(char *word){
-//     int hashAddress = 5381;
-//     for (int counter = 0; word[counter]!='\0'; counter++){
-//         hashAddress = ((hashAddress << 5) + hashAddress) + word[counter];
-//     }
-//     return hashAddress % NUMBER_OF_PODS < 0 ? -hashAddress % NUMBER_OF_PODS : hashAddress % NUMBER_OF_PODS;
-// }
-
 /*
-The kv_store_create() function creates a store if it is not yet created or opens the store if it is
-already created. After a successful call to the function, the calling process should have access to the store.
-This function could fail, if the system does not enough memory to create another store, or the user does
-not have proper permissions. In that case, the function should return -1. A successful creation should
-result in a 0 return value. The creation function could set a maximum size for the key-value store, where
-the size is measured in terms of the number of key-value pairs in the store.
+	Creates a shared memory store if not yet created or opens if already created.
+
+	Returns: 0 on success, -1 on failure.
 */
 int kv_store_create(char *name) {
 	if (name == NULL)
@@ -89,12 +78,10 @@ int kv_store_create(char *name) {
 	}
 	close(fd);
 
-	// Semaphore creation
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
 		for (int j = 0; j < POD_CAPACITY; j++) {
 			shared_memory->last_read_indices[i][j] = -1;	
 		}
-
 		char mutex_semaphore_name[22];
 		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
 		mutexes[i] = sem_open(mutex_semaphore_name, O_CREAT, S_IRWXU, 1);
@@ -116,15 +103,9 @@ int kv_store_create(char *name) {
 }
 
 /*
-The kv_store_write() function takes a key-value pair and writes them to the store. The key and
-value strings can be length limited. For instance, you can limit the key to 32 characters and value to 256
-characters. If a longer string is provided as input, you need to truncate the strings to fit into the maximum
-placeholders. If the store is already full, the store needs to evict an existing entry to make room for the
-new one. In addition to storing the key-value pair in the memory, this function needs to update an index
-that is also maintained in the store so that the reads looking for an key-value pair can be completed as fast
-as possible.
-Returns 0 on success, -1 on failure.
-TODO: truncate value
+	Writes key/value pair to the shared memory store.
+
+	Returns: 0 on success, -1 on failure.
 */
 int kv_store_write(char *key, char *value) {
 	if (key == NULL || value == NULL)
@@ -132,26 +113,14 @@ int kv_store_write(char *key, char *value) {
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 
-	// printf("write: Entry protocol\n");
 	// Entry protocol
 	sem_t *db = dbs[pod_number];
 	sem_wait(db);
 
-	// printf("write: Critical section\n");
 	// Critical section
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
 
 	int new_value = 1;
-	for (int i = 0; i < current_pod_size; i++) {
-		char *current_key = shared_memory->keys[pod_number][i];
-		if (strcmp(key, current_key) == 0) {
-			char *current_value = shared_memory->values[pod_number][i];
-			if (strcmp(value, current_value) == 0) {
-				new_value = 0;
-				break;
-			}
-		}
-	}
 	if (new_value) { // key/value doesn't already exist in store
 		if (current_pod_size < POD_CAPACITY)
 			shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
@@ -170,7 +139,6 @@ int kv_store_write(char *key, char *value) {
 		}
 	}
 
-	// printf("write: Exit protocol\n");
 	// Exit protocol
 	sem_post(db);
 
@@ -178,10 +146,9 @@ int kv_store_write(char *key, char *value) {
 }
 
 /*
-The kv_store_read() function takes a key and searches the store for the key-value pair. If found, it
-returns a copy of the value. It duplicates the string found in the store and returns a pointer to the string. It
-is the responsibility of the calling function to free the memory allocated for the string. If no key-value pair
-is found, a NULL value is returned.
+	Read by key from the shared memory store.
+
+	Returns: The value associated with the given key on success, NULL on failure.
 */
 char *kv_store_read(char *key) {
 	if (key == NULL)
@@ -189,7 +156,6 @@ char *kv_store_read(char *key) {
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
 
-	// printf("read: Entry protocol\n");
 	// Entry protocol
 	sem_t *mutex = mutexes[pod_number];
 	sem_wait(mutex);
@@ -202,7 +168,6 @@ char *kv_store_read(char *key) {
 	}
 	sem_post(mutex);
 
-	// printf("read: Critical section\n");
 	// Critical section
 	char *return_value = NULL;
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
@@ -224,7 +189,7 @@ char *kv_store_read(char *key) {
 		if (last_read_index != -1) {
 			key_value_index = (last_read_index + 1) % current_pod_size; // This is needed to cycle through all duplicate keys
 		}
-		int searching = 1; // searching for first occurence of key
+		int searching = 1; // Searching for first occurence of key
 		int first_index = -1;
 		for (int i = 0; i < current_pod_size; i++) {
 			store_key = shared_memory->keys[pod_number][key_value_index];
@@ -242,7 +207,6 @@ char *kv_store_read(char *key) {
 		}
 	}
 
-	// printf("read: Exit protocol\n");
 	// Exit protocol
 	sem_wait(mutex);
 	rc = shared_memory->number_of_readers[pod_number];
@@ -257,18 +221,16 @@ char *kv_store_read(char *key) {
 }
 
 /*
-The kv_store_read_all() function takes a key and returns all the values in the store. A NULL is
-returned if there is no records for the key.
-Returns 0 on success, -1 on failure.
+	Read all values associated with given key in the shared memory store.
+
+	Returns: All values associated with key on success, NULL on failure.
 */
 char **kv_store_read_all(char *key) {
 	if (key == NULL || strlen(key) > MAX_KEY_SIZE)
 		return NULL;
 
 	int pod_number = hash(key) % NUMBER_OF_PODS;
-	// int pod_number = hash_func(key);
 
-	// printf("read_all: Entry protocol\n");
 	// Entry protocol
 	sem_t *mutex = mutexes[pod_number];
 	sem_wait(mutex);
@@ -281,7 +243,6 @@ char **kv_store_read_all(char *key) {
 	}
 	sem_post(mutex);
 
-	// printf("read_all: Critical section\n");
 	// Critical section
 	char **values = NULL;
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
@@ -301,7 +262,6 @@ char **kv_store_read_all(char *key) {
 			for (int i = 0; i < current_pod_size && j < number_of_values; i++) {
 				char *store_key = shared_memory->keys[pod_number][read_index];
 				if (strcmp(key, store_key) == 0) {
-					// shared_memory->last_read_indices[pod_number][read_index] = -1; // Reset read index (to get full FIFO list)
 					char *store_value = shared_memory->values[pod_number][read_index];
 					values[j] = malloc(sizeof(char) * MAX_VALUE_SIZE + 1);
 					strncpy(values[j], store_value, MAX_VALUE_SIZE);
@@ -313,7 +273,6 @@ char **kv_store_read_all(char *key) {
 		}
 	}
 
-	// printf("read_all: Exit protocol\n");
 	// Exit protocol
 	sem_wait(mutex);
 	rc = shared_memory->number_of_readers[pod_number];
@@ -328,7 +287,9 @@ char **kv_store_read_all(char *key) {
 }
 
 /*
-Unmaps and unlinks the shared memory. Also deletes all named semaphores.
+	Unmaps and unlinks the shared memory. Also deletes all named semaphores.
+
+	Returns: 0 on success, -1 on failure.
 */
 int kv_delete_db() {
 	if (munmap(shared_memory, sizeof(SharedMemory)) == -1) {
@@ -339,25 +300,21 @@ int kv_delete_db() {
 		perror("unlink status failed");
 		return -1;
 	}
-
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
 		if (sem_close(mutexes[i]) == -1) {
 			perror("sem_close mutex failed");
 			return -1;
 		}
-
 		if (sem_close(dbs[i]) == -1) {
 			perror("sem_close db failed");
 			return -1;
 		}
-
 		char mutex_semaphore_name[22];
 		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
 		if (sem_unlink(mutex_semaphore_name) == -1) {
 			perror("sem_unlink mutex failed");
 			return -1;
 		}
-
 		char db_semaphore_name[22];
 		sprintf(db_semaphore_name, "%s%d", SEMAPHORE_DB_PREFIX, i);
 		if (sem_unlink(db_semaphore_name) == -1) {
@@ -365,212 +322,5 @@ int kv_delete_db() {
 			return -1;
 		}
 	}
-
-	// printf("SEANSTAPPAS: db successfully cleaned up!\n");
-
 	return 0;
 }
-
-
-/*
-* Handler for the SIGINT signal (Ctrl-C).
-*/
-
-static void handlerSIGINT(int sig) {
-	if (sig == SIGINT) {
-		printf("SEANSTAPPAS: Ctrl-C pressed!\n");
-		kv_delete_db();
-	}
-}
-
-void infinite_write() {
-	while (1) {
-		kv_store_write("key1", "value1");
-		printf("Write key1 value1\n");
-		sleep(1);
-	}
-}
-
-void infinite_read() {
-	while (1) {
-		char *value = kv_store_read("key1");
-		printf("Read key1: %s\n", value);
-		free(value);
-		sleep(1);
-	}
-}
-
-
-void test_all() {
-	char *value;
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	char **vals = kv_store_read_all("key1");
-	if (vals != NULL) {
-		for (int i = 0; vals[i] != NULL; i++) {
-			printf("Read %d: %s\n", i, vals[i]);
-			free(vals[i]);
-		}
-		free(vals);
-	}
-
-	printf("Read all\n");
-
-	kv_store_write("fN7Y81yc006aAW5Uljl73NcCAjwh25", "Ft2uK7jZ9fd9ogKy88gx4HoxqFE54463UY6TnjM57zdmLZTSpt27pGNHI4lyYXFk84R3yMyNBVPL4k2w73r3PeIw9z7Fxhn0722OAfNXu7L7f64427B9QPRUMWs5r0y5PIs784wmnLbF73XN5DP63Vc7uZ0p1B4P870WnpD2859Y777LH0572fn1xag1bVsq0F1zVlUn0Hp50J7rTtrZzYXOdO47sBXWTDMApIN5XLlAuuY5kfRlHwVn84Ynk52");
-	printf("Write fN7Y81yc006aAW5Uljl73NcCAjwh25 -> Ft2uK7jZ9fd9ogKy88gx4HoxqFE54463UY6TnjM57zdmLZTSpt27pGNHI4lyYXFk84R3yMyNBVPL4k2w73r3PeIw9z7Fxhn0722OAfNXu7L7f64427B9QPRUMWs5r0y5PIs784wmnLbF73XN5DP63Vc7uZ0p1B4P870WnpD2859Y777LH0572fn1xag1bVsq0F1zVlUn0Hp50J7rTtrZzYXOdO47sBXWTDMApIN5XLlAuuY5kfRlHwVn84Ynk52\n");
-	value = kv_store_read("fN7Y81yc006aAW5Uljl73NcCAjwh25");
-	if (value != NULL) {
-		printf("Read fN7Y81yc006aAW5Uljl73NcCAjwh25: %s\n", value);
-		free(value);
-	}
-
-	kv_store_write("key1", "value2");
-	printf("Write key1 -> value2\n");
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	kv_store_write("key1", "value3");
-	printf("Write key1 -> value3\n");
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	kv_store_write("key1", "value4");
-	printf("Write key1 -> value4\n");
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	value = kv_store_read("key1");
-	if (value != NULL) {
-		printf("Read key1: %s\n", value);
-		free(value);
-	}
-
-	char **all_values = kv_store_read_all("key1");
-	if (all_values != NULL) {
-		for (int i = 0; all_values[i] != NULL; i++) {
-			printf("read_all %d: %s\n", i, all_values[i]);
-			free(all_values[i]);
-		}
-		free(all_values);
-	}
-}
-
-void read_all_test_sean() {
-	char **all_values = kv_store_read_all("key0");
-	if (all_values != NULL) {
-		for (int i = 0; all_values[i] != NULL; i++) {
-			printf("read_all %d: %s\n", i, all_values[i]);
-			free(all_values[i]);
-		}
-		free(all_values);
-	}
-}
-
-// int main(int argc, char **argv) { // TODO: Remove this in final code!
-// 	if (signal(SIGINT, handlerSIGINT) == SIG_ERR) { // Handle Ctrl-C interrupt
-// 		printf("ERROR: Could not bind SIGINT signal handler\n");
-// 		exit(EXIT_FAILURE);
-// 	}
-// 	kv_store_create("/seanstappas");
-
-// 	for (int i = 0; i < 1024; i++) {
-// 		char key[32];
-// 		if (i % 2 == 0) {
-// 			sprintf(key, "%s%d", "key", 135);
-// 		} else {
-// 			sprintf(key, "%s%d", "key", 216);
-// 		}
-// 		// int pod_number = hash(key) % NUMBER_OF_PODS;
-// 		// printf("Pod number for %s: %d\n", key, pod_number);
-// 		char value[256];
-// 		sprintf(value, "%s%d", "value", i);
-// 		printf("Write %s -> %s\n", key, value);
-// 		kv_store_write(key, value);
-// 	}
-
-// 	printf("-------------------READ-------------------\n");
-
-// 	for (int i = 0; i < 512; i++) {
-// 		int suffix = 216;
-// 		if (i % 2 == 0) {
-// 			suffix = 135;
-// 		}
-
-// 		char key[32];
-// 		sprintf(key, "%s%d", "key", suffix);
-// 		char* value = kv_store_read(key);
-// 		if (value != NULL) {
-// 			printf("Read key%d -> %s\n", suffix, value);
-// 			free(value);
-// 		}
-// 	}
-
-// 	printf("----------------READ ALL----------------\n");
-
-// 	char **all_values = kv_store_read_all("key216");
-// 	if (all_values != NULL) {
-// 		for (int i = 0; all_values[i] != NULL; i++) {
-// 			printf("read_all %d: %s\n", i, all_values[i]);
-// 			free(all_values[i]);
-// 		}
-// 		free(all_values);
-// 	}
-
-// 	kv_delete_db();
-// }
