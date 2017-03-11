@@ -51,6 +51,8 @@ unsigned long hash(char *str)
 /*
 	Creates a shared memory store if not yet created or opens if already created.
 
+	name: The name of the shared memory.
+
 	Returns: 0 on success, -1 on failure.
 */
 int kv_store_create(char *name) {
@@ -105,6 +107,9 @@ int kv_store_create(char *name) {
 /*
 	Writes key/value pair to the shared memory store.
 
+	key: The key to be written.
+	value: The value to be written.
+
 	Returns: 0 on success, -1 on failure.
 */
 int kv_store_write(char *key, char *value) {
@@ -119,23 +124,19 @@ int kv_store_write(char *key, char *value) {
 
 	// Critical section
 	int current_pod_size = shared_memory->current_pod_sizes[pod_number];
+	if (current_pod_size < POD_CAPACITY)
+		shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
+	int key_value_index = shared_memory->last_write_indices[pod_number];
+	if (current_pod_size != 0)
+		key_value_index = (key_value_index + 1) % POD_CAPACITY; // wrap-around (overwriting if necessary)
+	shared_memory->last_write_indices[pod_number] = key_value_index;
+	strncpy(shared_memory->keys[pod_number][key_value_index], key, MAX_KEY_SIZE);
+	strncpy(shared_memory->values[pod_number][key_value_index], value, MAX_VALUE_SIZE);
 
-	int new_value = 1;
-	if (new_value) { // key/value doesn't already exist in store
-		if (current_pod_size < POD_CAPACITY)
-			shared_memory->current_pod_sizes[pod_number] = (current_pod_size + 1);
-		int key_value_index = shared_memory->last_write_indices[pod_number];
-		if (current_pod_size != 0)
-			key_value_index = (key_value_index + 1) % POD_CAPACITY; // wrap-around (overwriting if necessary)
-		shared_memory->last_write_indices[pod_number] = key_value_index;
-		strncpy(shared_memory->keys[pod_number][key_value_index], key, MAX_KEY_SIZE);
-		strncpy(shared_memory->values[pod_number][key_value_index], value, MAX_VALUE_SIZE);
-
-		for (int i = 0; i < current_pod_size; i++) {
-			int last_read_index = shared_memory->last_read_indices[pod_number][i];
-			if (last_read_index == key_value_index) { // Remove references to current index
-				 shared_memory->last_read_indices[pod_number][i] = -1;
-			}
+	for (int i = 0; i < current_pod_size; i++) {
+		int last_read_index = shared_memory->last_read_indices[pod_number][i];
+		if (last_read_index == key_value_index) { // Remove references to current index
+			 shared_memory->last_read_indices[pod_number][i] = -1;
 		}
 	}
 
@@ -147,6 +148,8 @@ int kv_store_write(char *key, char *value) {
 
 /*
 	Read by key from the shared memory store.
+
+	key: The key to be read.
 
 	Returns: The value associated with the given key on success, NULL on failure.
 */
@@ -223,6 +226,8 @@ char *kv_store_read(char *key) {
 /*
 	Read all values associated with given key in the shared memory store.
 
+	key: The key to be read.
+
 	Returns: All values associated with key on success, NULL on failure.
 */
 char **kv_store_read_all(char *key) {
@@ -297,7 +302,7 @@ int kv_delete_db() {
 		return -1;
 	}
 	if (shm_unlink(db_name) == -1) {
-		perror("unlink status failed");
+		perror("shm_unlink failed");
 		return -1;
 	}
 	for (int i = 0; i < NUMBER_OF_PODS; i++) {
