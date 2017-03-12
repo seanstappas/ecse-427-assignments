@@ -22,8 +22,8 @@
 #define __TEST_MAX_KEY_SIZE__ 31 // Max size of key
 #define __TEST_MAX_DATA_LENGTH__ 256 // Max size of value
 #define __TEST_MAX_POD_ENTRY__ 256 // Number of rounds (iterations)
-#define __TEST_SHARED_MEM_NAME__ "/seanstappas"
-#define __TEST_SHARED_SEM_NAME__ "/seanstappas"
+#define __TEST_SHARED_MEM_NAME__ "/seanstappas_db"
+#define __TEST_SHARED_SEM_NAME__ "/seanstappas_sem"
 #define __TEST_FORK_NUM__ 4 // Number of forks in test 2
 #define RUN_ITERATIONS 2000 // Number of iterations for test 2
 

@@ -1,3 +1,11 @@
+/*
+	ECSE-427 Assignment 2: Simple Key-Value Store
+	Tested using the provided "a2_testcase" tester, with 0 errors.
+
+	Sean Stappas
+	March 12, 2017
+*/
+
 #include "a2_lib.h"
 
 #define _XOPEN_SOURCE 700
@@ -83,10 +91,7 @@ int kv_store_create(char *name) {
 	}
 	close(fd);
 
-	for (int i = 0; i < NUMBER_OF_PODS; i++) {
-		for (int j = 0; j < POD_CAPACITY; j++) {
-			shared_memory->last_read_indices[i][j] = -1;	
-		}
+	for (int i = 0; i < NUMBER_OF_PODS; i++) { // Setup semaphores
 		char mutex_semaphore_name[22];
 		sprintf(mutex_semaphore_name, "%s%d", SEMAPHORE_MUTEX_PREFIX, i);
 		mutexes[i] = sem_open(mutex_semaphore_name, O_CREAT, S_IRWXU, 1);

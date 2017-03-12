@@ -1,3 +1,11 @@
+/*
+	ECSE-427 Assignment 2: Simple Key-Value Store
+	Tested using the provided "a2_testcase" tester, with 0 errors.
+
+	Sean Stappas
+	March 12, 2017
+*/
+
 #ifndef __A2_SEANSTAPPAS__
 #define __A2_SEANSTAPPAS__
 
