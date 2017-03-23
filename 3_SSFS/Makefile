@@ -7,3 +7,6 @@ EXEC1=ssfs
 
 ssfs: $(SOURCE1)
 	$(CC) -o $(EXEC1) $(CFLAGS) $(SOURCE1) $(LIBS)
+
+clean:
+	rm $(EXEC1)
