@@ -7,6 +7,25 @@
 int read_pointer_indices[NUM_FILES];
 int write_pointer_indices[NUM_FILES];
 
+typedef struct _inode_t {
+	int size;
+	int direct[14];
+	int indirect;
+} inode_t;
+
+typedef struct _superblock_t {
+	unsigned char magic[4];
+	int bsize;
+	// ...
+	inode_t root;
+	inode_t shadow[4];
+	int last_shadow;
+} super_block_t;
+
+typedef struct _block_t {
+	unsigned char bytes[BLOCK_SIZE];
+} block_t;
+
 /*
 	Formats the virtual disk and creates the SSFS file system on top of the disk.
 	------------------------------------------------------------------------------------------------
@@ -16,7 +35,22 @@ int write_pointer_indices[NUM_FILES];
 void mkssfs(int fresh) {
 	char *filename = "seanstappas";
 	init_fresh_disk(filename, BLOCK_SIZE, NUM_BLOCKS);
-}            
+	init_fbm();
+	init_wm();
+	populate_jnode();
+}
+
+void init_fbm() {
+
+}   
+
+void init_wm() {
+
+}
+
+void populate_jnode() {
+	
+}
 
 /*
 	Open the given file. If the file does not exist, a new file with size 0 is created.
