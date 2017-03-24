@@ -3,13 +3,12 @@
 #define BLOCK_SIZE 1024
 #define NUM_BLOCKS 20
 #define NUM_FILES 200
-
-int read_pointer_indices[NUM_FILES];
-int write_pointer_indices[NUM_FILES];
+#define NUM_DIRECT_POINTERS 14
+#define NUM_SHADOWS 4
 
 typedef struct _inode_t {
 	int size;
-	int direct[14];
+	int direct[NUM_DIRECT_POINTERS];
 	int indirect;
 } inode_t;
 
@@ -18,13 +17,24 @@ typedef struct _superblock_t {
 	int bsize;
 	// ...
 	inode_t root;
-	inode_t shadow[4];
+	inode_t shadow[NUM_SHADOWS];
 	int last_shadow;
 } super_block_t;
 
 typedef struct _block_t {
 	unsigned char bytes[BLOCK_SIZE];
 } block_t;
+
+typedef struct _cache_t
+{
+	int read_pointers[NUM_BLOCKS];
+	int write_pointers[NUM_BLOCKS];
+	inode_t inodes[NUM_BLOCKS];
+
+} cache_t;
+
+block_t super, fbm, wm;
+cache_t inode_cache;
 
 /*
 	Formats the virtual disk and creates the SSFS file system on top of the disk.
@@ -35,21 +45,38 @@ typedef struct _block_t {
 void mkssfs(int fresh) {
 	char *filename = "seanstappas";
 	init_fresh_disk(filename, BLOCK_SIZE, NUM_BLOCKS);
-	init_fbm();
-	init_wm();
-	populate_jnode();
+	init_fbm_and_wm();
+	init_super();
 }
 
-void init_fbm() {
-
-}   
-
-void init_wm() {
-
+void init_fbm_and_wm() {
+	for (int i = 0; i < BLOCK_SIZE; ++i)
+	{
+		fbm->bytes[i] = 0xFF;
+		wm->bytes[i] = 0xFF;
+	}
+	write_blocks((NUM_BLOCKS - 2) * BLOCK_SIZE, 1, fbm); // do calloc + memcpy here probably
+	write_blocks((NUM_BLOCKS - 1) * BLOCK_SIZE, 1, wm);
 }
 
-void populate_jnode() {
-	
+void init_super() { // populate root j-node
+	for (int i = 0; i < NUM_DIRECT_POINTERS; i++)
+	{
+		int index = get_free_block();
+		super->root->size = -1;
+	}
+	write_blocks(0, 1, super);
+}
+
+int get_free_block() {
+	for (int i = 0; i < BLOCK_SIZE; i++)
+	{
+		if (fbm->bytes[i] != 0) {
+			fbm->bytes[i] = 0;
+			return i;
+		}
+	}
+	return -1;
 }
 
 /*
@@ -61,7 +88,10 @@ void populate_jnode() {
 			 descriptor table.
 */
 int ssfs_fopen(char *name) {
-	
+	// Access root directory
+	// Find inode
+	// Copy inode to OFD table
+	// Return read/write pointer
 }
 
 /*
