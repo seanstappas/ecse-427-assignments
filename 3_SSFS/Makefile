@@ -1,12 +1,15 @@
-CC=gcc
-LIBS=-lrt -lpthread
-CFLAGS=-g -std=c99 -D _BSD_SOURCE
-SOURCE1=disk_emu.c ssfs.c test.c
+# To compile with test1, make test1
+# To compile with test2, make test2
+CC = clang -g -Wall
+EXECUTABLE=sfs
 
-EXEC1=ssfs
+SOURCES_TEST1= disk_emu.c sfs_api.c sfs_test1.c tests.c
+SOURCES_TEST2= disk_emu.c sfs_api.c sfs_test2.c tests.c
 
-ssfs: $(SOURCE1)
-	$(CC) -o $(EXEC1) $(CFLAGS) $(SOURCE1) $(LIBS)
+test1: $(SOURCES_TEST1) 
+	$(CC) -o $(EXECUTABLE) $(SOURCES_TEST1)
 
+test2: $(SOURCES_TEST2)
+	$(CC) -o $(EXECUTABLE) $(SOURCES_TEST2)
 clean:
-	rm $(EXEC1)
+	rm $(EXECUTABLE)

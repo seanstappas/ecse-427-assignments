@@ -1,3 +1,4 @@
+#include "sfs_api.h"
 #include "disk_emu.h"
 #include <stdint.h>
 
@@ -11,9 +12,9 @@
 #define DIRECTORY_ENTRY_LENGTH 16
 
 typedef struct _inode_t { // total size of inode = 64 bytes
-	uint32_t size;
-	uint32_t direct[NUM_DIRECT_POINTERS];
-	uint32_t indirect;
+	int32_t size; // can have negative size (init to -1). Represents size of file, in bytes
+	int32_t direct[NUM_DIRECT_POINTERS]; // init to -1
+	int32_t indirect; // init to -1
 } inode_t;
 
 typedef struct _superblock_t {
@@ -22,7 +23,7 @@ typedef struct _superblock_t {
 	uint32_t num_blocks; // Q: 1024 + 3 or 1024 (data blocks)?
 	inode_t root;
 	inode_t shadow[NUM_SHADOWS];
-	uint32_t last_shadow; // index of last shadow node?
+	int32_t last_shadow; // index of last shadow node? init to -1
 } super_block_t;
 
 typedef struct _block_t {
@@ -41,11 +42,11 @@ typedef struct _directory_entry_t {
 	int inode_index;
 } directory_entry_t;
 
-super_block_t super; // Defines the file system geometry
-block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
-block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable)
+super_block_t *super; // Defines the file system geometry
+block_t *fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
+block_t *wm; // Writeable data blocks (value 1 = data block at that index is writeable)
 
-cache_t inode_cache; // in-memory cache of RW pointers + inodes
+cache_t *inode_cache; // in-memory cache of RW pointers + inodes
 
 /*
 	Formats the virtual disk and creates the SSFS file system on top of the disk.
@@ -55,7 +56,7 @@ cache_t inode_cache; // in-memory cache of RW pointers + inodes
 */
 void mkssfs(int fresh) {
 	init_disk(fresh, "seanstappas");
-	init_fbm_and_wm();
+	init_fbm_and_wm(); // What to do here if not fresh?
 	init_super();
 	// init file containing all i-nodes
 	// setup root directory
@@ -74,20 +75,33 @@ void init_fbm_and_wm() {
 		fbm->bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
 		wm->bytes[i] = 1;
 	}
-	write_blocks((NUM_DATA_BLOCKS - 2) * BLOCK_SIZE, 1, fbm); // do calloc + memcpy here probably
+
+	void *fbm_buf = calloc(1, BLOCK_SIZE);
+	memcpy(fbm_buf, fbm, BLOCK_SIZE);
+	write_blocks((NUM_DATA_BLOCKS - 2) * BLOCK_SIZE, 1, fbm_buf); // do calloc + memcpy here probably
+
+	void *wm_buf = calloc(1, BLOCK_SIZE);
+	memcpy(wm_buf, wm, BLOCK_SIZE);
 	write_blocks((NUM_DATA_BLOCKS - 1) * BLOCK_SIZE, 1, wm);
 }
 
 void init_super() { // populate root j-node
+	super->magic = MAGIC;
+	super->block_size = BLOCK_SIZE;
+	super->num_blocks = NUM_DATA_BLOCKS + 3;
+	super->last_shadow = -1;
+	inode_t *root;
+	root->size = -1; // Q: Is the size of root = sum of all bytes or the number of i-nodes?
+	root->indirect = -1;
 	for (int i = 0; i < NUM_DIRECT_POINTERS; i++)
 	{
-		int index = get_free_block();
-		super->magic = MAGIC;
-		super->block_size = BLOCK_SIZE;
-		super->num_blocks = NUM_DATA_BLOCKS;
-		super->root->size = -1;
+		root->direct[i] = get_free_block(); // find free blocks for every direct pointer
 	}
-	write_blocks(0, 1, super);
+	super->root = root;
+
+	void *super_buf = calloc(1, BLOCK_SIZE);
+	memcpy(super_buf, root, BLOCK_SIZE);
+	write_blocks(0, 1, super_buf);
 }
 
 int get_free_block() {

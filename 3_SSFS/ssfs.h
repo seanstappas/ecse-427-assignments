@@ -1,3 +1,5 @@
+//Functions you should implement. 
+//Return -1 for error besides mkssfs
 void mkssfs(int fresh);                              // creates the file system
 int ssfs_fopen(char *name);                          // opens the given file
 int ssfs_fclose(int fileID);                         // closes the given file
