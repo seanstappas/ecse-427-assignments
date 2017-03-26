@@ -9,7 +9,7 @@
 #define MAGIC 260639512 // student id
 #define BLOCK_SIZE 1024
 #define NUM_DATA_BLOCKS 1024 // Not including super, FBM, WM
-#define NUM_FILES 200
+#define NUM_FILES 223 // Number of file i-nodes. Not including super.
 #define NUM_DIRECT_POINTERS 14
 #define NUM_SHADOWS 4
 #define MAX_FILENAME_LENGTH 10
@@ -25,6 +25,7 @@ typedef struct _superblock_t {
 	uint32_t magic; // 4 bytes long
 	uint32_t block_size;
 	uint32_t num_blocks; // Q: 1024 + 3 or 1024 (data blocks)?
+	uint32_t num_inodes;
 	inode_t root;
 	inode_t shadow[NUM_SHADOWS];
 	int32_t last_shadow; // index of last shadow node? init to -1
@@ -34,23 +35,29 @@ typedef struct _block_t {
 	unsigned char bytes[BLOCK_SIZE]; // use char since 1 char = 1 byte
 } block_t;
 
-typedef struct _cache_t {
-	int read_pointers[NUM_DATA_BLOCKS];
-	int write_pointers[NUM_DATA_BLOCKS];
-	inode_t inodes[NUM_DATA_BLOCKS];
+typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
+	uint32_t read_pointers[NUM_FILES][NUM_DATA_BLOCKS];
+	uint32_t write_pointers[NUM_FILES][NUM_DATA_BLOCKS];
 
-} cache_t;
+} ofd_table_t;
 
 typedef struct _directory_entry_t { // fits within 16 bytes (actually 14)
+	uint32_t inode_index; // 4 bytes
 	char filename[MAX_FILENAME_LENGTH]; // 10 bytes
-	uint32_t inode_index; // guaranteed 4 bytes
 } directory_entry_t;
 
 super_block_t super; // Defines the file system geometry
 block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
 block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable)
+ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW pointers + inodes).
+directory_entry_t directory_cache[NUM_FILES]; // Cache of all filenames
 
-cache_t inode_cache; // in-memory cache of RW pointers + inodes
+void write_single_block(int start_address, void *data) {
+	void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
+	memcpy(buf, data, BLOCK_SIZE);
+	write_blocks(start_address, 1, buf);
+	free(buf);
+}
 
 int get_free_block() {
 	for (int i = 0; i < BLOCK_SIZE; i++)
@@ -69,22 +76,15 @@ void init_fbm_and_wm() {
 		fbm.bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
 		wm.bytes[i] = 1;
 	}
-
-	void *fbm_buf = calloc(1, BLOCK_SIZE);
-	memcpy(fbm_buf, &fbm, BLOCK_SIZE);
-	write_blocks(NUM_DATA_BLOCKS - 2, 1, fbm_buf); // do calloc + memcpy here probably
-	free(fbm_buf);
-
-	void *wm_buf = calloc(1, BLOCK_SIZE);
-	memcpy(wm_buf, &wm, BLOCK_SIZE);
-	write_blocks(NUM_DATA_BLOCKS - 1, 1, wm_buf);
-	free(wm_buf);
+	write_single_block(NUM_DATA_BLOCKS - 2, &fbm);
+	write_single_block(NUM_DATA_BLOCKS - 1, &wm);
 }
 
 void init_super() { // populate root j-node
 	super.magic = MAGIC;
 	super.block_size = BLOCK_SIZE;
 	super.num_blocks = NUM_DATA_BLOCKS + 3;
+	super.num_inodes = 14;
 	super.last_shadow = -1;
 	inode_t root;
 	root.size = -1; // Q: Is the size of root = sum of all bytes or the number of i-nodes? (Probably sum of all bytes)
@@ -94,11 +94,7 @@ void init_super() { // populate root j-node
 		root.direct[i] = get_free_block(); // find free blocks for every direct pointer
 	}
 	super.root = root;
-
-	void *super_buf = calloc(1, BLOCK_SIZE);
-	memcpy(super_buf, &root, BLOCK_SIZE);
-	write_blocks(0, 1, super_buf);
-	free(super_buf);
+	write_single_block(0, &super);
 }
 
 /*
@@ -113,7 +109,7 @@ void mkssfs(int fresh) {
 		init_fresh_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3); // +3 for super, fbm, wm
 	else
 		init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
-	init_fbm_and_wm(); // What to do here if not fresh?
+	init_fbm_and_wm(); // What to do here if not fresh? Copy super, fbm, wm from disk.
 	init_super();
 	// init file containing all i-nodes
 	// setup root directory
