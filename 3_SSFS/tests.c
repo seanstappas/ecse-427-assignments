@@ -181,7 +181,7 @@ int test_read_all_files(int *file_id, int *file_size, char **write_buf, int num_
     if(strcmp(buf, write_buf[i]) != 0){
       fprintf(stderr, "Error: \nRead failed.\n\n");
       *err_no += 1;
-      printf("%d %d %d\n", strlen(buf), strlen(write_buf[i]), file_size[i]);
+      printf("%lu %lu %d\n", strlen(buf), strlen(write_buf[i]), file_size[i]);
     }
   }
   free(buf);
@@ -418,7 +418,7 @@ int test_write_to_overflow(int *file_id, int *file_size, char **write_buf, int i
         fprintf(stderr, "Error: Read Failed. \n");
         *err_no += 1;
     }else if(read_length != strlen(read_buffer)){
-        fprintf(stderr, "Error: Read length error. Expected %d but received %d\n", read_length, strlen(read_buffer));
+        fprintf(stderr, "Error: Read length error. Expected %d but received %lu\n", read_length, strlen(read_buffer));
         *err_no += 1;
     }else if(strcmp(buffer[i], read_buffer) != 0){
         fprintf(stderr, "Error: Invalid Content Read. Expected:\n%s\nReceived:\n %s\n", buffer[i], read_buffer);
