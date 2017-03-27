@@ -59,6 +59,12 @@ void write_single_block(int start_address, void *data) {
 	free(buf);
 }
 
+void* read_single_block(int start_address) {
+    void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
+    read_blocks(start_address, 1, buf);
+    return buf;
+}
+
 int get_free_block() {
 	for (int i = 0; i < BLOCK_SIZE; i++)
 	{
@@ -97,6 +103,14 @@ void init_super() { // populate root j-node
 	write_single_block(0, &super);
 }
 
+void init_directory_cache() {
+
+}
+
+void init_ofd() {
+
+}
+
 /*
 	Formats the virtual disk and creates the SSFS file system on top of the disk.
 	------------------------------------------------------------------------------------------------
@@ -111,6 +125,8 @@ void mkssfs(int fresh) {
 		init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
 	init_fbm_and_wm(); // What to do here if not fresh? Copy super, fbm, wm from disk.
 	init_super();
+    init_ofd();
+    init_directory_cache();
 	// init file containing all i-nodes
 	// setup root directory
 }
