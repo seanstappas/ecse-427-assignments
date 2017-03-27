@@ -46,3 +46,19 @@ Network Trash Folder
 Temporary Items
 .apdisk
 *.pdf
+cmake-build-debug
+*.txt
+
+*.iml
+
+3_SSFS/.idea/3_SSFS.iml
+
+*.xml
+
+*.xml
+
+3_SSFS/.idea/misc.xml
+
+3_SSFS/.idea/modules.xml
+
+3_SSFS/.idea/vcs.xml
