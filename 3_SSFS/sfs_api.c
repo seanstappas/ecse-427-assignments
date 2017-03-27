@@ -9,7 +9,7 @@
 #define MAGIC 260639512 // student id
 #define BLOCK_SIZE 1024
 #define NUM_DATA_BLOCKS 1024 // Not including super, FBM, WM
-#define NUM_FILES 223 // Number of file i-nodes. Not including super.
+#define NUM_FILES 200 // Number of file i-nodes. Not including super. Set upper bound.
 #define NUM_DIRECT_POINTERS 14
 #define NUM_SHADOWS 4
 #define MAX_FILENAME_LENGTH 10
@@ -18,7 +18,7 @@
 typedef struct _inode_t { // total size of inode = 64 bytes
 	int32_t size; // can have negative size (init to -1). Represents size of file, in bytes
 	int32_t direct[NUM_DIRECT_POINTERS]; // init to -1
-	int32_t indirect; // init to -1
+	int32_t indirect; // init to -1. Only used for large files
 } inode_t;
 
 typedef struct _superblock_t {
