@@ -9,7 +9,9 @@
 #define MAGIC 260639512 // student id
 #define BLOCK_SIZE 1024
 #define NUM_DATA_BLOCKS 1024 // Not including super, FBM, WM
-#define NUM_FILES 200 // Number of file i-nodes. Not including super. Set upper bound.
+#define NUM_INODES 200 // Number of file i-nodes. Not including super. Set upper bound.
+#define NUM_INODES_PER_BLOCK 15
+#define NUM_DIRECTORY_ENTRIES_PER_BLOCK 60
 #define NUM_DIRECT_POINTERS 14
 #define NUM_SHADOWS 4
 #define MAX_FILENAME_LENGTH 10
@@ -20,6 +22,10 @@ typedef struct _inode_t { // total size of inode = 64 bytes
 	int32_t direct[NUM_DIRECT_POINTERS]; // init to -1
 	int32_t indirect; // init to -1. Only used for large files
 } inode_t;
+
+typedef struct _inode_block_t { // A block of inodes
+	inode_t inodes[NUM_INODES_PER_BLOCK];
+} inode_block_t;
 
 typedef struct _superblock_t {
 	uint32_t magic; // 4 bytes long
@@ -36,8 +42,8 @@ typedef struct _block_t {
 } block_t;
 
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
-	uint32_t read_pointers[NUM_FILES][NUM_DATA_BLOCKS];
-	uint32_t write_pointers[NUM_FILES][NUM_DATA_BLOCKS];
+	uint32_t read_pointers[NUM_INODES][NUM_DATA_BLOCKS];
+	uint32_t write_pointers[NUM_INODES][NUM_DATA_BLOCKS];
 
 } ofd_table_t;
 
@@ -46,11 +52,15 @@ typedef struct _directory_entry_t { // fits within 16 bytes (actually 14)
 	char filename[MAX_FILENAME_LENGTH]; // 10 bytes
 } directory_entry_t;
 
+typedef struct _directory_block_t { // A block of directory entries (root directory)
+	directory_entry_t directory_entries[NUM_DIRECTORY_ENTRIES_PER_BLOCK];
+} directory_block_t;
+
 super_block_t super; // Defines the file system geometry
 block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
 block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable)
 ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW pointers + inodes).
-directory_entry_t directory_cache[NUM_FILES]; // Cache of all filenames
+directory_entry_t directory_cache[NUM_INODES]; // Cache of all filenames
 
 void write_single_block(int start_address, void *data) {
 	void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
