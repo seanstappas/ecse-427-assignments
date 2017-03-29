@@ -9,7 +9,7 @@
 #define MAGIC 260639512 // student id
 #define BLOCK_SIZE 1024
 #define NUM_DATA_BLOCKS 1024 // Not including super, FBM, WM
-#define NUM_INODES 200 // Number of file i-nodes. Not including super. Set upper bound.
+#define NUM_FILES 200 // Number of file i-nodes. Not including super. Set upper bound.
 #define NUM_INODES_PER_BLOCK 15
 #define NUM_DIRECTORY_ENTRIES_PER_BLOCK 60
 #define NUM_DIRECT_POINTERS 14
@@ -42,8 +42,8 @@ typedef struct _block_t {
 } block_t;
 
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
-	uint32_t read_pointers[NUM_INODES][NUM_DATA_BLOCKS];
-	uint32_t write_pointers[NUM_INODES][NUM_DATA_BLOCKS];
+	int read_pointers[NUM_FILES];
+	int write_pointers[NUM_FILES];
 
 } ofd_table_t;
 
@@ -58,9 +58,9 @@ typedef struct _directory_block_t { // A block of directory entries (root direct
 
 super_block_t super; // Defines the file system geometry
 block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
-block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable)
+block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable). Not necessary for simple system (without shadowing)
 ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW pointers + inodes).
-directory_entry_t directory_cache[NUM_INODES]; // Cache of all filenames
+directory_entry_t directory_cache[NUM_FILES]; // Cache of all filenames
 
 void write_single_block(int start_address, void *data) {
 	void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
@@ -76,8 +76,7 @@ void* read_single_block(int start_address) {
 }
 
 int get_free_block() {
-	for (int i = 0; i < BLOCK_SIZE; i++)
-	{
+	for (int i = 0; i < BLOCK_SIZE; i++) {
 		if (fbm.bytes[i] != 0) {  // Only need to use the LSB here
 			fbm.bytes[i] = 0;
 			return i;
@@ -87,8 +86,7 @@ int get_free_block() {
 }
 
 void init_fbm_and_wm() {
-	for (int i = 0; i < BLOCK_SIZE; ++i)
-	{
+	for (int i = 0; i < BLOCK_SIZE; i++) {
 		fbm.bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
 		wm.bytes[i] = 1;
 	}
@@ -156,6 +154,12 @@ int ssfs_fopen(char *name) {
 	// Find inode
 	// Copy inode to OFD table
 	// Return read/write pointer
+
+    for (int i = 0; i < NUM_FILES; i++) {
+        if (strcmp(directory_cache[i].filename, name) == 0)
+            return directory_cache[i].inode_index;
+    }
+
 	return -1;
 }
 
@@ -178,8 +182,11 @@ int ssfs_fclose(int fileID) {
 
 	Returns: 0 on success, -1 on failure.
 */
-int ssfs_frseek(int fileID, int loc) {
-	return -1;
+int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
+    if (fileID < 0 || fileID >= NUM_FILES)
+		return -1;
+    ofd_table.read_pointers[fileID] = loc;
+	return 0;
 }
 
 /*
@@ -191,7 +198,10 @@ int ssfs_frseek(int fileID, int loc) {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_fwseek(int fileID, int loc) {
-	return -1;
+	if (fileID < 0 || fileID >= NUM_FILES)
+		return -1;
+	ofd_table.write_pointers[fileID] = loc;
+	return 0;
 }
 
 /*
@@ -204,6 +214,7 @@ int ssfs_fwseek(int fileID, int loc) {
 	Returns: The number of bytes written.
 */
 int ssfs_fwrite(int fileID, char *buf, int length) {
+	int write_pointer = ofd_table.write_pointers[fileID];
 	return -1;
 }
 
@@ -218,6 +229,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 	Returns: The number of bytes read.
 */
 int ssfs_fread(int fileID, char *buf, int length) {
+	int read_pointer = ofd_table.read_pointers[fileID];
 	return -1;
 }
 
@@ -250,15 +262,5 @@ int ssfs_commit() {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_restore(int cnum) {
-	return -1;
-}
-
-// Added functions
-
-int ssfs_get_next_file_name(char *fname) {
-	return -1;
-}
-
-int ssfs_get_file_size(char* path) {
 	return -1;
 }

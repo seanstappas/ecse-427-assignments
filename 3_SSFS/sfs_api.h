@@ -1,8 +1,6 @@
 //Functions you should implement. 
 //Return -1 for error besides mkssfs
 void mkssfs(int fresh);
-int ssfs_get_next_file_name(char *fname);
-int ssfs_get_file_size(char* path);
 int ssfs_fopen(char *name);
 int ssfs_fclose(int fileID);
 int ssfs_frseek(int fileID, int loc);

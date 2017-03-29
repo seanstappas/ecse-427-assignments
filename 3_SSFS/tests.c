@@ -14,11 +14,11 @@ int test_num = 1;
 
 char *rand_name() 
 {
-  char fname[MAX_FNAME_LENGTH];
+  char *fname = calloc(MAX_FNAME_LENGTH, sizeof(char));
   int i;
 
-  for (i = 0; i < MAX_FNAME_LENGTH; i++) {
-    if (i != MAX_FNAME_LENGTH - 4) {
+  for (i = 0; i < MAX_FNAME_LENGTH -1; i++) {
+    if (i != MAX_FNAME_LENGTH - 5) {
       fname[i] = 'A' + (rand() % 26);
     }
     else {
@@ -26,7 +26,7 @@ char *rand_name()
     }
   }
   fname[i] = '\0';
-  return (strdup(fname));
+  return fname;
 }
 
 /*
@@ -46,17 +46,17 @@ char *rand_text(int length){
 //Test if your persistence actually works. 
 int test_persistence(int *error, int write_length){
     char *file_name = "test.txt";
-    char *write_data[10];
+    char *write_data[20];
     int file_id;
     int pid;
     int error_num = 0;
     int temp;
-    pid = fork();
+    pid = fork();  //Split processes so that no memory structure would remain in the main thread
     if(pid == 0){
-        for(int i = 0; i < 10; i++){
+        for(int i = 0; i < 20; i++){
             write_data[i] = rand_text(write_length);
         }
-        pid = fork();
+        pid = fork(); //Split again for the write so both read and write happens on different processes
         if(pid == 0){
             //Create new file system fresh
             mkssfs(1);
@@ -64,19 +64,19 @@ int test_persistence(int *error, int write_length){
             if(file_id < 0){
                 fprintf(stderr, "Error. File id return negative\n");
             }
-            for(int i = 0; i < 10; i++){
+            for(int i = 0; i < 20; i++){
                 if(ssfs_fwrite(file_id, write_data[i], write_length) != write_length){
                     fprintf(stderr ,"Error. Invalid Write Length ..\n");
                     error_num += 1;
                 }
             }
-            for(int i = 0; i < 10; i++){
+            for(int i = 0; i < 20; i++){
                 free(write_data[i]);
             }
             exit(error_num);
       }else{
           waitpid(pid, &temp, 0);
-          error_num += temp;
+          error_num += WEXITSTATUS(temp);
           pid = fork();
           if(pid == 0){
               char *read_buf = calloc(write_length + 1, sizeof(char));
@@ -86,7 +86,7 @@ int test_persistence(int *error, int write_length){
                   fprintf(stderr, "Error. File id returned negative\n");
                   error_num += 1;
               }
-            for(int i = 0; i < 10; i++){
+            for(int i = 0; i < 20; i++){
                 if(ssfs_fread(file_id, read_buf,write_length) != write_length){
                     fprintf(stderr, "Error. Invalid number read ... \n");
                     error_num += 1;
@@ -95,30 +95,35 @@ int test_persistence(int *error, int write_length){
                         error_num += 1;
                     }
               }
-              ssfs_fclose(file_id);
-              ssfs_remove(file_name);
+              ssfs_fclose(file_id);   //Close file
+              ssfs_remove(file_name); //Remove the file
               free(read_buf);
-              for(int i = 0; i < 10; i++){
+              for(int i = 0; i < 20; i++){
                   free(write_data[i]);
               }
               exit(error_num);
           }else{
               waitpid(pid, &temp, 0);
-              error_num += temp;
-              mkssfs(0);
+              error_num += WEXITSTATUS(temp);
+              char *read_buf = calloc(write_length + 1, sizeof(char));
+              read_buf[0] = '\0';
+              mkssfs(0); //Initialize stale file system. Testing if remove worked
               file_id = ssfs_fopen(file_name);
-              if(ssfs_get_file_size(file_name) > 0){
+              ssfs_frseek(file_id, 0); //set seek to 0
+              if(ssfs_fread(file_id, read_buf, 512) > 0 && strlen(read_buf) > 0){
                   fprintf(stderr, "Error. File should have been removed\n");
                   error_num += 1;
               }
-              for(int i = 0; i < 10; i++){
+              for(int i = 0; i < 20; i++){
                   free(write_data[i]);
               }
+              free(read_buf);
               exit(error_num);
           }
         }
     }else{   
         waitpid(pid, &error_num, 0);
+        error_num = WEXITSTATUS(error_num);
     }
     *error += error_num;
     printf("\n-------------------------------\nTest_num[%d]: Current Error Num: %d\n--------------------------------\n\n", test_num, *error);
@@ -181,7 +186,7 @@ int test_read_all_files(int *file_id, int *file_size, char **write_buf, int num_
     if(strcmp(buf, write_buf[i]) != 0){
       fprintf(stderr, "Error: \nRead failed.\n\n");
       *err_no += 1;
-      printf("%lu %lu %d\n", strlen(buf), strlen(write_buf[i]), file_size[i]);
+      printf("%d %d %d\n", strlen(buf), strlen(write_buf[i]), file_size[i]);
     }
   }
   free(buf);
@@ -418,7 +423,7 @@ int test_write_to_overflow(int *file_id, int *file_size, char **write_buf, int i
         fprintf(stderr, "Error: Read Failed. \n");
         *err_no += 1;
     }else if(read_length != strlen(read_buffer)){
-        fprintf(stderr, "Error: Read length error. Expected %d but received %lu\n", read_length, strlen(read_buffer));
+        fprintf(stderr, "Error: Read length error. Expected %d but received %d\n", read_length, strlen(read_buffer));
         *err_no += 1;
     }else if(strcmp(buffer[i], read_buffer) != 0){
         fprintf(stderr, "Error: Invalid Content Read. Expected:\n%s\nReceived:\n %s\n", buffer[i], read_buffer);
@@ -547,119 +552,6 @@ int test_overflow_open(int *file_id, int *file_sizes, int *write_ptr, char **fil
   return ret;
 }
 
-
-/*
-Test if file size match the stored file size. 
-We assume 1 character = 1 byte.
-*/
-int test_get_file_size(int *file_size, char **file_names, int num_file, int *err_no){
-    int size;
-    for(int i = 0; i < num_file; i++){
-        size = ssfs_get_file_size(file_names[i]);
-        if(size != file_size[i]){
-            fprintf(stderr, "ERROR: Invalid file size for file %s.\nGiven: %d, Actual: %d\n", file_names[i], size, file_size[i]);
-            *err_no += 1;
-        }
-            
-    }
-    printf("\n-------------------------------\nTest_num[%d]: Current Error Num: %d\n--------------------------------\n\n", test_num, *err_no);
-    test_num++;
-    return 0;
-}
-
-/*
-Test if all the files names exists in our file name list. Doesn't have to be in order inserted
-but the order given should always be the same when looped around.
-This means that I can have 
-file1
-file2
-file3
-
-get_file_name x 3 returns
-
-file2
-file3
-file1 
-That is OK.
-
-But on the next get_file_name x 3,
-I should get 
-
-file2
-file3
-file1 
-That is what is meant by order. 
-*/
-int test_get_file_name(char **file_names, int num_file, int *err_no){
-    char **name_list = calloc(MAX_FD, sizeof(char**));
-    char *name = NULL;
-    int res;
-    int found =0;
-    //Print a list of current file names
-    for(int i = 0; i < num_file; i++){
-      printf("File_name list: %s\n", file_names[i]);
-    }
-
-    //Collect list of file names
-    for(int i = 0; i < num_file; i++){
-        name_list[i] = calloc(MAX_FNAME_LENGTH*2, sizeof(char));
-        res = ssfs_get_next_file_name(name_list[i]);
-        if (res < 0) {
-            fprintf(stderr, "Warning: the ssfs_get_next_file_name returned negative values\n");
-        }
-    }
-
-    //Try to find the word in the list. If not exist, then errors
-    for(int j = 0; j < num_file; j++){
-      for(int i = 0; i < num_file; i++){
-          if(strcmp(name_list[i], file_names[j]) == 0){
-              found++;
-              break;
-          }
-      }
-      if(!found){
-          fprintf(stderr, "ERROR: Invalid file name.\nGiven: %s\n", name);
-          *err_no += 1;
-      }
-    }
-
-    name = calloc(MAX_FNAME_LENGTH*2, sizeof(char));
-    res = ssfs_get_next_file_name(name);
-    if(res != 0){
-        fprintf(stderr, "ERROR: End of namelist. Should return 0.\n");
-        *err_no += 1;
-    }
-    free(name);
-
-
-    for(int i = 0; i < num_file; i++){
-      printf("Collected list: %s\n", name_list[i]);
-    }
-    //Now check the get_file_name order is consistent. 
-    for(int i = 0; i < num_file; i++){
-        name = calloc(MAX_FNAME_LENGTH*2, sizeof(char));
-        res = ssfs_get_next_file_name(name);
-        if(strcmp(name, name_list[i]) != 0){
-          fprintf(stderr, "ERROR: File name not in order.\nGiven: %s\n", name);
-          *err_no += 1;
-        }
-        free(name_list[i]);
-        free(name);
-    }
-    name = calloc(MAX_FNAME_LENGTH*2, sizeof(char));
-    res = ssfs_get_next_file_name(name);
-    if(res != 0){
-        fprintf(stderr, "ERROR: End of namelist. Should return 0.\n");
-        *err_no += 1;
-    }
-    free(name);
-    printf("\n-------------------------------\nTest_num[%d]: Current Error Num: %d\n--------------------------------\n\n", test_num, *err_no);
-    test_num++;
-    free(name_list);
-    return 0;
-}
-
-
 /*
 Attempts to remove files(AKA delete the file from the system)
 Will only give warnings. 
@@ -748,7 +640,7 @@ int test_open_new_files(char **file_names, int *file_id, int num_file, int *err_
   if(num_file < 1)
     return 0;
   //We always keep this one close to heart
-  file_names[0] = strdup("FINAL_ANSWERS.pdf");
+  file_names[0] = strdup("test.pdf");
   file_id[0] = ssfs_fopen(file_names[0]);
   printf("File Opened %s\n", file_names[0]);
   if (file_id[0] < 0) {

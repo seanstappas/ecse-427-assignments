@@ -4,9 +4,9 @@
 //For all tests, -1 is considered error and 0 is considered success. 
 int difficult_test(){
   char **write_buf;
-  int file_id[ABS_CAP_FD];
+  int *file_id = calloc(ABS_CAP_FD, sizeof(int));
+  char **file_names = calloc(ABS_CAP_FD, sizeof(char *));
   int *write_ptr = calloc(ABS_CAP_FD, sizeof(int));
-  char *file_names[ABS_CAP_FD];
   int *file_size = calloc(ABS_CAP_FD, sizeof(int));
   int iterations = 10;
   int err_no = 0;
@@ -18,21 +18,20 @@ int difficult_test(){
   for(int i = 0; i < MAX_FD; i++)
     write_buf[i] = calloc(MAX_BYTES + 1, sizeof(char));
 
+  test_persistence(&err_no, 256);
   test_persistence(&err_no, 512);
+  test_persistence(&err_no, 1024);
   mkssfs(1);                     /* Initialize the file system. */
   //Attemping to crash the system with overflowing fopens
   //This function will remove all files after it's done.
   test_overflow_open(file_id, file_size, write_ptr, file_names, write_buf, ABS_CAP_FD, &err_no);
   //So we have to open new files. 
   test_open_new_files(file_names, file_id, num_file, &err_no);
-  test_get_file_name(file_names, num_file, &err_no);
   //Heavy write into the file system
   for(int i = 0; i < iterations; i++){
       res = test_difficult_write_files(file_id, file_size, write_ptr, write_buf, num_file, &err_no);
       if(res < 0)
           break;
-      //File sizes should match
-      test_get_file_size(file_size, file_names, num_file, &err_no);
   }
   // //More heavy random access memory reads
   for(int i = 0; i < iterations; i++){
@@ -54,13 +53,10 @@ int difficult_test(){
   //Open up new files with new names. 
   test_open_new_files(file_names, file_id, num_file, &err_no);
   //Test if the new file names match. 
-  test_get_file_name(file_names, num_file, &err_no);
   for(int i = 0; i < iterations; i++){
       res = test_difficult_write_files(file_id, file_size, write_ptr, write_buf, num_file, &err_no);
       if(res < 0)
           break;
-    //At each step, we test the file size to make it sure it matches 
-      test_get_file_size(file_size, file_names, num_file, &err_no);
     //We also play around with the seek by offsetting. 
       test_seek(file_id, file_size, write_ptr, write_buf, num_file, 10, &err_no);
   }
@@ -93,6 +89,8 @@ int difficult_test(){
   }
   free(write_buf);
   free(write_ptr);
+  free(file_id);
+  free(file_names);
   return 0;
 }
 
