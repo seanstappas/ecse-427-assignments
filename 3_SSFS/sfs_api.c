@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 
 #define MAGIC 260639512 // student id
@@ -42,8 +41,8 @@ typedef struct _block_t {
 } block_t;
 
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
-	int read_pointers[NUM_FILES];
-	int write_pointers[NUM_FILES];
+	int read_pointer_offsets[NUM_FILES];
+	int write_pointers_offsets[NUM_FILES];
     inode_t inodes[NUM_FILES];
 
 } ofd_table_t;
@@ -63,9 +62,9 @@ block_t wm; // Writeable data blocks (value 1 = data block at that index is writ
 ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW pointers + inodes).
 directory_entry_t directory_cache[NUM_FILES]; // Cache of all filenames
 
-void write_single_block(int start_address, void *data) {
+void write_single_block(int start_address, void *data, int offset) {
 	void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
-	memcpy(buf, data, BLOCK_SIZE);
+	memcpy(buf + offset, data, BLOCK_SIZE - offset);
 	write_blocks(start_address, 1, buf);
 	free(buf);
 }
@@ -91,8 +90,8 @@ void init_fbm_and_wm() {
 		fbm.bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
 		wm.bytes[i] = 1;
 	}
-	write_single_block(NUM_DATA_BLOCKS - 2, &fbm);
-	write_single_block(NUM_DATA_BLOCKS - 1, &wm);
+	write_single_block(NUM_DATA_BLOCKS - 2, &fbm, 0);
+	write_single_block(NUM_DATA_BLOCKS - 1, &wm, 0);
 }
 
 void init_super() { // populate root j-node
@@ -109,7 +108,7 @@ void init_super() { // populate root j-node
 		root.direct[i] = get_free_block(); // find free blocks for every direct pointer
 	}
 	super.root = root;
-	write_single_block(0, &super);
+	write_single_block(0, &super, 0);
 }
 
 void init_directory_cache() {
@@ -186,7 +185,7 @@ int ssfs_fclose(int fileID) {
 int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
     if (fileID < 0 || fileID >= NUM_FILES)
 		return -1;
-    ofd_table.read_pointers[fileID] = loc;
+    ofd_table.read_pointer_offsets[fileID] = loc;
 	return 0;
 }
 
@@ -201,7 +200,7 @@ int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
 int ssfs_fwseek(int fileID, int loc) {
 	if (fileID < 0 || fileID >= NUM_FILES)
 		return -1;
-	ofd_table.write_pointers[fileID] = loc;
+	ofd_table.write_pointers_offsets[fileID] = loc;
 	return 0;
 }
 
@@ -215,7 +214,7 @@ int ssfs_fwseek(int fileID, int loc) {
 	Returns: The number of bytes written.
 */
 int ssfs_fwrite(int fileID, char *buf, int length) {
-	int write_pointer = ofd_table.write_pointers[fileID];
+	int write_pointer = ofd_table.write_pointers_offsets[fileID];
     if (write_pointer < 0)
         return -1;
     if (write_pointer > length)
@@ -223,11 +222,12 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     int num_blocks = length % BLOCK_SIZE;
     if (num_blocks < 0 || num_blocks > NUM_DIRECT_POINTERS) // TODO: Implement indirect pointers?
         return -1;
+    int offset = write_pointer;
     for (int i = 0; i < num_blocks; i++) {
         int block_index = get_free_block();
         if (block_index == -1) // TODO: What to do when no more space? Overwrite?
             return -1;
-        write_single_block(block_index, buf + write_pointer + (i * BLOCK_SIZE)); // TODO: This is wrong... do this correctly.
+        write_single_block(block_index, buf, offset); // TODO: This is wrong... do this correctly.
     }
 	return -1;
 }
@@ -243,7 +243,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 	Returns: The number of bytes read.
 */
 int ssfs_fread(int fileID, char *buf, int length) {
-	int read_pointer = ofd_table.read_pointers[fileID];
+	int read_pointer = ofd_table.read_pointer_offsets[fileID];
 	return -1;
 }
 
