@@ -44,6 +44,7 @@ typedef struct _block_t {
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
 	int read_pointers[NUM_FILES];
 	int write_pointers[NUM_FILES];
+    inode_t inodes[NUM_FILES];
 
 } ofd_table_t;
 
@@ -215,6 +216,19 @@ int ssfs_fwseek(int fileID, int loc) {
 */
 int ssfs_fwrite(int fileID, char *buf, int length) {
 	int write_pointer = ofd_table.write_pointers[fileID];
+    if (write_pointer < 0)
+        return -1;
+    if (write_pointer > length)
+        write_pointer = length;
+    int num_blocks = length % BLOCK_SIZE;
+    if (num_blocks < 0 || num_blocks > NUM_DIRECT_POINTERS) // TODO: Implement indirect pointers?
+        return -1;
+    for (int i = 0; i < num_blocks; i++) {
+        int block_index = get_free_block();
+        if (block_index == -1) // TODO: What to do when no more space? Overwrite?
+            return -1;
+        write_single_block(block_index, buf + write_pointer + (i * BLOCK_SIZE)); // TODO: This is wrong... do this correctly.
+    }
 	return -1;
 }
 
