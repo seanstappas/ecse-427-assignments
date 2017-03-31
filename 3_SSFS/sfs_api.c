@@ -12,6 +12,7 @@
 #define NUM_INODES_PER_BLOCK 15
 #define NUM_DIRECTORY_ENTRIES_PER_BLOCK 60
 #define NUM_DIRECT_POINTERS 14
+#define NUM_INDIRECT_POINTERS_PER_BLOCK 256
 #define NUM_SHADOWS 4
 #define MAX_FILENAME_LENGTH 10
 #define DIRECTORY_ENTRY_LENGTH 16
@@ -43,7 +44,6 @@ typedef struct _block_t {
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
 	int read_pointer_offsets[NUM_FILES];
 	int write_pointers_offsets[NUM_FILES];
-    // TODO: Can have 'free' bit to denote free slot (or just -1...)
 
 } ofd_table_t;
 
@@ -61,6 +61,10 @@ typedef struct _root_directory_t { // A block of directory entries (root directo
 typedef struct _inode_table_t {
     inode_t inodes[NUM_FILES];
 } inode_table_t;
+
+typedef struct _indirect_block_t {
+    int inode_indices[NUM_INDIRECT_POINTERS_PER_BLOCK];
+} indirect_block_t;
 
 super_block_t super; // Defines the file system geometry
 block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
@@ -275,15 +279,22 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 */
 int ssfs_fread(int fileID, char *buf, int length) {
 	int read_pointer = ofd_table.read_pointer_offsets[fileID];
+    inode_t inode = inode_table.inodes[fileID];
+    int size = inode.size;
+    int num_blocks = size / BLOCK_SIZE;
 
-    // Assuming single block
-    char *block_temp_buf = read_single_block(inode_table.inodes[fileID].direct[0]);
-    memcpy(buf, block_temp_buf + read_pointer, length);
+    int bytes_to_read = length;
+    if (read_pointer + length > size) {
+        bytes_to_read = size - read_pointer;
+    }
 
+        // Assuming single block
+    //    char *block_temp_buf = read_single_block(inode_table.inodes[fileID].direct[0]);
+    //    memcpy(buf, block_temp_buf + read_pointer, length);
     // Error check!
 
     // Single block:
-    //char buffer[1024];
+    // char buffer[1024];
     // readblock(blk)
     // memcpy(buf + readptr, buffer
 
@@ -295,7 +306,32 @@ int ssfs_fread(int fileID, char *buf, int length) {
     // readptr % 1024 = where you should start
     // readptr + length % 1024 = where to end
 
-	return -1;
+    char *buf1;
+    char *buf2 = calloc(1, (size_t) (num_blocks * 1024));
+    indirect_block_t *indirect = NULL;
+    for (int i = 0; i < num_blocks; i++) {
+        int block_num;
+        if (i < NUM_DIRECT_POINTERS)
+            block_num = inode.direct[i];
+        else {
+            if (indirect == NULL)
+                indirect = (indirect_block_t*) read_single_block(inode.indirect);
+            block_num = indirect->inode_indices[i - NUM_DIRECT_POINTERS];
+        }
+        buf1 = read_single_block(block_num); // TODO: make this more efficient (don't need to calloc every time)
+        memcpy(buf2 + (i * BLOCK_SIZE), buf1, BLOCK_SIZE);
+        free(buf1);
+    }
+
+    memcpy(buf, buf2 + read_pointer, bytes_to_read);
+    free(buf2);
+    if (indirect != NULL)
+        free(indirect);
+
+
+    ofd_table.read_pointer_offsets[fileID] = read_pointer + bytes_to_read;
+
+	return bytes_to_read;
 }
 
 /*
