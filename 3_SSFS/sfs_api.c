@@ -230,6 +230,7 @@ int ssfs_fopen(char *name) {
             ofd_table.read_pointers[j] = 0;
             strncpy(root_directory.directory_entries[j].filename, name, MAX_FILENAME_LENGTH);
             save_root_directory();
+            return j;
         }
     }
 
@@ -244,7 +245,7 @@ int ssfs_fopen(char *name) {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_fclose(int fileID) {
-    if (fileID < 0 || fileID >= NUM_FILES)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
         return -1;
     ofd_table.read_pointers[fileID] = -1;
     ofd_table.write_pointers[fileID] = -1;
@@ -260,7 +261,7 @@ int ssfs_fclose(int fileID) {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
-    if (fileID < 0 || fileID >= NUM_FILES)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
         return -1;
     ofd_table.read_pointers[fileID] = loc;
     return 0;
@@ -275,7 +276,7 @@ int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_fwseek(int fileID, int loc) {
-    if (fileID < 0 || fileID >= NUM_FILES)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
         return -1;
     ofd_table.write_pointers[fileID] = loc;
     return 0;
@@ -291,9 +292,9 @@ int ssfs_fwseek(int fileID, int loc) {
 	Returns: The number of bytes written.
 */
 int ssfs_fwrite(int fileID, char *buf, int length) {
-    int write_pointer = ofd_table.write_pointers[fileID];
-    if (write_pointer < 0) // File doesn't exist
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
         return -1;
+    int write_pointer = ofd_table.write_pointers[fileID];
 //    if (write_pointer > length) // Take care of this in wseek
 //        write_pointer = length;
     inode_t inode = inode_table.inodes[fileID];
@@ -333,6 +334,9 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
             return -1;
         write_blocks(block_num, 1, buf1 + (i * BLOCK_SIZE));
     }
+    free(buf1);
+    if (indirect != NULL)
+        free(indirect);
 
     inode_table.inodes[fileID].size = new_size;
     ofd_table.write_pointers[fileID] = new_size;
@@ -368,9 +372,9 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 	Returns: The number of bytes read!! Not length (since length may be larger than what is actually left to read).
 */
 int ssfs_fread(int fileID, char *buf, int length) {
-    int read_pointer = ofd_table.read_pointers[fileID];
-    if (read_pointer < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
         return -1;
+    int read_pointer = ofd_table.read_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID];
     int size = inode.size;
     int num_blocks = size / BLOCK_SIZE;
