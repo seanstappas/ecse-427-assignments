@@ -29,10 +29,10 @@ typedef struct _inode_block_t { // A block of inodes
 } inode_block_t;
 
 typedef struct _superblock_t {
-    uint32_t magic; // 4 bytes long
-    uint32_t block_size;
-    uint32_t num_blocks; // Q: 1024 + 3 or 1024 (data blocks)?
-    uint32_t num_inodes;
+    int magic; // 4 bytes long
+    int block_size;
+    int num_blocks; // Q: 1024 + 3 or 1024 (data blocks)?
+    int num_inodes;
     inode_t root;
     inode_t shadow[NUM_SHADOWS];
     int32_t last_shadow; // index of last shadow node? init to -1
