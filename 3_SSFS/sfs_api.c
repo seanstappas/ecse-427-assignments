@@ -17,7 +17,7 @@
 #define DIRECTORY_ENTRY_LENGTH 16
 
 typedef struct _inode_t { // total size of inode = 64 bytes
-	int32_t size; // can have negative size (init to -1). Represents size of file, in bytes
+	int32_t size; // can have negative size (init to -1). Represents size of file, in bytes (can mod for number of blocks...)
 	int32_t direct[NUM_DIRECT_POINTERS]; // init to -1
 	int32_t indirect; // init to -1. Only used for large files
 } inode_t;
@@ -43,7 +43,8 @@ typedef struct _block_t {
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
 	int read_pointer_offsets[NUM_FILES];
 	int write_pointers_offsets[NUM_FILES];
-    inode_t inodes[NUM_FILES];
+    inode_t inodes[NUM_FILES]; // TODO: Can be pointer to OFD table
+    // TODO: Can have 'free' bit to denote free slot
 
 } ofd_table_t;
 
@@ -55,6 +56,12 @@ typedef struct _directory_entry_t { // fits within 16 bytes (actually 14)
 typedef struct _directory_block_t { // A block of directory entries (root directory)
 	directory_entry_t directory_entries[NUM_DIRECTORY_ENTRIES_PER_BLOCK];
 } directory_block_t;
+
+// TODO: Put all the inodes in memory in mkssfs (inode_table) -> write to disk
+
+typedef struct _inode_table_t {
+    inode_t inodes[NUM_FILES];
+};
 
 super_block_t super; // Defines the file system geometry
 block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
@@ -171,6 +178,7 @@ int ssfs_fopen(char *name) {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_fclose(int fileID) {
+    // Removes entry from OFD
 	return -1;
 }        
 
@@ -220,8 +228,8 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     if (write_pointer > length)
         write_pointer = length;
     int num_blocks = length % BLOCK_SIZE;
-    if (num_blocks < 0 || num_blocks > NUM_DIRECT_POINTERS) // TODO: Implement indirect pointers?
-        return -1;
+    if (num_blocks < 0 || num_blocks > NUM_DIRECT_POINTERS) // TODO: Implement indirect pointers
+        return -1; // too many blocks
     int offset = write_pointer;
     for (int i = 0; i < num_blocks; i++) {
         int block_index = get_free_block();
@@ -230,6 +238,22 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
         write_single_block(block_index, buf, offset); // TODO: This is wrong... do this correctly.
     }
 	return -1;
+
+    /*
+     * Implement read first! Need to read first before writing.
+     *
+     * Check first if at end lf file
+     *
+     * char giant_buf* = calloc(1, num_blocks * 1024);
+     * fseek_read(...);
+     * ssfs_fread(fileID, giant_buf, length) MAKE SURE TO RESET READ POINTER! (fseek back)
+     *
+     * memcpy(giant_buf + writeptr, buffer, length);
+     *
+     * write back to disk (one at a time)
+     *
+     * Return -1 if cannot write full data...
+     */
 }
 
 /*
@@ -237,13 +261,29 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 	file.
 	------------------------------------------------------------------------------------------------
 	fileID: The file ID corresponding to the file (from the open file descriptor table).
-	buf:	The characters to be read from the file.
+	buf:	A buffer to store the read bytes in (already allocated).
 	length: The number of bytes to be read.
 
-	Returns: The number of bytes read.
+	Returns: The number of bytes read!! Not length (since length may be larger than what is actually left to read).
 */
 int ssfs_fread(int fileID, char *buf, int length) {
 	int read_pointer = ofd_table.read_pointer_offsets[fileID];
+
+    // Error check!
+
+    // Single block:
+    //char buffer[1024];
+    // readblock(blk)
+    // memcpy(buf + readptr, buffer
+
+    // Otherwise:
+    // char Buf1[1024]
+    // char *Buf2 = calloc(num_blocks * 1024);
+    // readblock(blk)
+    // memcpy(buf2 + readptr + i * 1024, buf1, length);
+    // readptr % 1024 = where you should start
+    // readptr + length % 1024 = where to end
+
 	return -1;
 }
 
@@ -256,6 +296,7 @@ int ssfs_fread(int fileID, char *buf, int length) {
 	Returns: 0 on success, -1 on failure.
 */
 int ssfs_remove(char *file) {
+    // Set all blocks used by file to FREE (in FBM) and remove inode from inode table.
 	return -1;
 }         
 
