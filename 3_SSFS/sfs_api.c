@@ -18,6 +18,10 @@
 #define DIRECTORY_ENTRY_LENGTH 16
 #define NUM_ROOT_DIRECTORY_BLOCKS 4
 
+#define SUPER_INDEX 0
+#define FBM_INDEX 1022
+#define WM_INDEX 1023
+
 #define DEBUG 0
 
 typedef struct _inode_t { // total size of inode = 64 bytes
@@ -43,7 +47,6 @@ typedef struct _block_t {
 typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
     int read_pointers[NUM_FILES];
     int write_pointers[NUM_FILES];
-
 } ofd_table_t;
 
 typedef struct _directory_entry_t { // fits within 16 bytes (actually 14)
@@ -98,6 +101,7 @@ void save_inode_table() {
     void *buf = calloc(1, BLOCK_SIZE * NUM_DIRECT_POINTERS);
     memcpy(buf, &inode_table, BLOCK_SIZE * NUM_DIRECT_POINTERS);
     write_blocks(1, NUM_DIRECT_POINTERS, buf);
+    free(buf);
 }
 
 int get_free_block() {
@@ -146,7 +150,6 @@ void init_super() { // populate root j-node // TODO: update super for shadowing 
     root.indirect = -1;
     for (int i = 0; i < NUM_DIRECT_POINTERS; i++) {
         root.direct[i] = get_free_block(); // find free blocks for every direct pointer (should be 1...14)
-//        root.direct[i] = i + 1; // simpler (1...14)
     }
     super.root = root;
     write_single_block(0, &super);
@@ -181,14 +184,16 @@ void mkssfs(int fresh) {
         init_fresh_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3); // +3 for super, fbm, wm
         init_fbm_and_wm(); // What to do here if not fresh? Copy super, fbm, wm from disk.
         init_super();
-        init_ofd();
         init_root_directory();
         init_inode_table();
-    } else {
+    } else { // TODO: Access old copy....
         init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
+        read_blocks(0, 1, &super);
+        read_blocks(1, NUM_DIRECT_POINTERS, &inode_table);
+        read_blocks(FBM_INDEX, 1, &fbm);
+        read_blocks(WM_INDEX, 1, &wm);
     }
-    // init file containing all i-nodes
-    // setup root directory
+    init_ofd();
 }
 
 /*
@@ -290,12 +295,15 @@ int ssfs_fwseek(int fileID, int loc) {
 	Returns: The number of bytes written.
 */
 int ssfs_fwrite(int fileID, char *buf, int length) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || length < 0)
         return -1;
     int write_pointer = ofd_table.write_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID];
     int size = inode.size;
     int new_size = write_pointer + length;
+    if (new_size < size) {
+        new_size = size;
+    }
     int num_blocks = new_size / BLOCK_SIZE;
     if (new_size % BLOCK_SIZE != 0)
         num_blocks++;
@@ -303,7 +311,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     if (DEBUG)
         printf("~num_blocks: %d\n", num_blocks);
 
-    char *buf1 = calloc(1, (size_t) new_size);
+    char *buf1 = calloc(1, (size_t) (num_blocks * BLOCK_SIZE));
     int old_read_pointer = ofd_table.read_pointers[fileID];
     ssfs_frseek(fileID, 0);
     ssfs_fread(fileID, buf1, size); // TODO: Make this more efficient (only read what is necessary)
@@ -350,8 +358,12 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
                 }
             }
         }
-        if (block_num < 0)
+        if (block_num < 0) {
+            free(buf1);
+            if (indirect != NULL)
+                free(indirect);
             return -1;
+        }
         write_blocks(block_num, 1, buf1 + (i * BLOCK_SIZE));
         if (DEBUG)
             printf("~buf: %s\n", buf1 + (i * BLOCK_SIZE));
@@ -378,7 +390,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 	Returns: The number of bytes read!! Not length (since length may be larger than what is actually left to read).
 */
 int ssfs_fread(int fileID, char *buf, int length) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || length < 0)
         return -1;
     int read_pointer = ofd_table.read_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID];
@@ -392,9 +404,11 @@ int ssfs_fread(int fileID, char *buf, int length) {
     int bytes_to_read = length;
     if (read_pointer + length > size) {
         bytes_to_read = size - read_pointer;
+        if (bytes_to_read <= 0)
+            return 0;
     }
-    char *buf1;
-    char *buf2 = calloc(1, (size_t) (num_blocks * 1024));
+    char *buf1 = calloc(1, BLOCK_SIZE);
+    char *buf2 = calloc(1, (size_t) (num_blocks * BLOCK_SIZE));
     indirect_block_t *indirect = NULL;
     for (int i = 0; i < num_blocks; i++) {
         int block_num;
@@ -405,13 +419,17 @@ int ssfs_fread(int fileID, char *buf, int length) {
                 indirect = (indirect_block_t *) read_single_block(inode.indirect);
             block_num = indirect->inode_indices[i - NUM_DIRECT_POINTERS];
         }
-        if (block_num < 0)
+        if (block_num < 0) {
+            free(buf1);
+            free(buf2);
             return -1;
-        buf1 = read_single_block(block_num); // TODO: make this more efficient (don't need to calloc every time)
+        }
+        memset(buf1, 0, BLOCK_SIZE);
+        read_blocks(block_num, 1, buf1);
         memcpy(buf2 + (i * BLOCK_SIZE), buf1, BLOCK_SIZE);
-        free(buf1);
     }
 
+    free(buf1);
     memcpy(buf, buf2 + read_pointer, bytes_to_read);
 
     if (DEBUG)
