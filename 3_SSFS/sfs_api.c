@@ -190,6 +190,7 @@ void mkssfs(int fresh) {
         init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
         read_blocks(0, 1, &super);
         read_blocks(1, NUM_DIRECT_POINTERS, &inode_table);
+        read_blocks(15, 4, &root_directory);
         read_blocks(FBM_INDEX, 1, &fbm);
         read_blocks(WM_INDEX, 1, &wm);
     }
@@ -350,6 +351,12 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
                 if (indirect == NULL)
                     indirect = (indirect_block_t *) read_single_block(inode.indirect);
                 int indirect_index = i - NUM_DIRECT_POINTERS;
+                if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) {
+                    free(buf1);
+                    if (indirect != NULL)
+                        free(indirect);
+                    return -1;
+                }
                 block_num = indirect->inode_indices[indirect_index];
                 if (block_num < 0) {
                     block_num = get_free_block();
@@ -358,7 +365,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
                 }
             }
         }
-        if (block_num < 0) {
+        if (block_num < 0 || block_num >= NUM_DATA_BLOCKS) {
             free(buf1);
             if (indirect != NULL)
                 free(indirect);
@@ -417,7 +424,13 @@ int ssfs_fread(int fileID, char *buf, int length) {
         else {
             if (indirect == NULL)
                 indirect = (indirect_block_t *) read_single_block(inode.indirect);
-            block_num = indirect->inode_indices[i - NUM_DIRECT_POINTERS];
+            int indirect_index = i - NUM_DIRECT_POINTERS;
+            if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) {
+                free(buf1);
+                free(buf2);
+                return -1;
+            }
+            block_num = indirect->inode_indices[indirect_index];
         }
         if (block_num < 0) {
             free(buf1);
