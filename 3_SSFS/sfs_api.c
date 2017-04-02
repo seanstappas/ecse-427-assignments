@@ -407,8 +407,8 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     if (indirect != NULL)
         free(indirect);
 
-    inode_table.inodes[fileID].size = new_size;
-    ofd_table.write_pointers[fileID] = new_size;
+    inode_table.inodes[fileID].size = new_size; // Update the inode's size
+    ofd_table.write_pointers[fileID] = new_size; // Move the write pointer to the end of the file
     save_inode_table();
 
     return length;
@@ -480,7 +480,7 @@ int ssfs_fread(int fileID, char *buf, int length) {
     if (indirect != NULL)
         free(indirect);
 
-    ofd_table.read_pointers[fileID] = read_pointer + bytes_to_read;
+    ofd_table.read_pointers[fileID] = read_pointer + bytes_to_read; // Move read pointer up
 
     return bytes_to_read;
 }
