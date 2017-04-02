@@ -61,6 +61,9 @@ typedef struct _inode_table_t {
     inode_t inodes[NUM_FILES];
 } inode_table_t;
 
+/**
+ * A block holding only pointers to other data blocks.
+ */
 typedef struct _indirect_block_t {
     int inode_indices[NUM_INDIRECT_POINTERS_PER_BLOCK];
 } indirect_block_t;
@@ -72,6 +75,12 @@ ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW poin
 root_directory_t root_directory; // Cache of all filenames
 inode_table_t inode_table;
 
+/**
+ * Writes a single block to the disk emulator.
+ *
+ * @param start_address  the address to start writing data to (in number of blocks)
+ * @param data           the data to write
+ */
 void write_single_block(int start_address, void *data) {
     void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
     memcpy(buf, data, BLOCK_SIZE);
@@ -79,16 +88,29 @@ void write_single_block(int start_address, void *data) {
     free(buf);
 }
 
+/**
+ * Reads a single data block from the disk emulator and places the data in a calloc'd buffer. It is up to the user to
+ * free the buffer.
+ *
+ * @param   start_address the address to start reading from (in number of blocks)
+ * @return  a pointer to the buffer with read data
+ */
 void *read_single_block(int start_address) {
     void *buf = calloc(1, BLOCK_SIZE); // Allocate a blank block
     read_blocks(start_address, 1, buf);
     return buf;
 }
 
+/**
+ * Saves the FBM to the disk emulator.
+ */
 void save_fbm() {
     write_single_block(NUM_DATA_BLOCKS - 2, &fbm);
 }
 
+/**
+ * Saves the WM to the disk emulator.
+ */
 void save_wm() {
     write_single_block(NUM_DATA_BLOCKS - 1, &wm);
 }
@@ -97,6 +119,9 @@ void save_root_directory() {
     write_blocks(15, 4, &root_directory);
 }
 
+/**
+ * Saves the root directory to the emulator.
+ */
 void save_inode_table() {
     void *buf = calloc(1, BLOCK_SIZE * NUM_DIRECT_POINTERS);
     memcpy(buf, &inode_table, BLOCK_SIZE * NUM_DIRECT_POINTERS);
@@ -104,6 +129,11 @@ void save_inode_table() {
     free(buf);
 }
 
+/**
+ * Finds a free data block in the disk emulator.
+ *
+ * @return  the address on the free block (in number of blocks)
+ */
 int get_free_block() {
     for (int i = 0; i < BLOCK_SIZE; i++) {
         if (fbm.bytes[i] != 0) {  // Only need to use the LSB here
@@ -115,6 +145,9 @@ int get_free_block() {
     return -1;
 }
 
+/**
+ * Initializes the inode table and saves it to the disk emulator.
+ */
 void init_inode_table() {
     for (int i = 0; i < NUM_FILES; i++) {
         inode_table.inodes[i].size = -1;
@@ -126,6 +159,9 @@ void init_inode_table() {
     save_inode_table();
 }
 
+/**
+ * Initializes the FBM and WM, and saves them to the disk emulator.
+ */
 void init_fbm_and_wm() {
     for (int i = 0; i < BLOCK_SIZE; i++) {
         fbm.bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
@@ -139,6 +175,9 @@ void init_fbm_and_wm() {
     save_wm();
 }
 
+/**
+ * Initializes the super block, and saves it to the disk emulator.
+ */
 void init_super() { // populate root j-node // TODO: update super for shadowing section...
     super.magic = MAGIC;
     super.block_size = BLOCK_SIZE;
@@ -155,6 +194,9 @@ void init_super() { // populate root j-node // TODO: update super for shadowing 
     write_single_block(0, &super);
 }
 
+/**
+ * Initializes the root directory and saves it to the disk emulator.
+ */
 void init_root_directory() {
     for (int i = 0; i < NUM_FILES; i++) {
         root_directory.directory_entries[i].filename[0] = '\0';
@@ -165,6 +207,9 @@ void init_root_directory() {
     save_root_directory();
 }
 
+/**
+ * Initializes the open file descriptor table.
+ */
 void init_ofd() {
     for (int i = 0; i < NUM_FILES; i++) {
         ofd_table.read_pointers[i] = -1;
@@ -172,21 +217,21 @@ void init_ofd() {
     }
 }
 
-/*
-	Formats the virtual disk and creates the SSFS file system on top of the disk.
-	------------------------------------------------------------------------------------------------
-	fresh: Flag to signal if the file system should be created from scratch. If false, the file
-		   system is opened from the disk.
-*/
+/**
+ * Formats the virtual disk and creates the SSFS file system on top of the disk.
+ *
+ * @param fresh  a flag to signal if the file system should be created from scratch. If false, the file
+ *               system is opened from the disk.
+ */
 void mkssfs(int fresh) {
     char *disk_name = "seanstappas";
-    if (fresh) {
+    if (fresh) { // Create new copy
         init_fresh_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3); // +3 for super, fbm, wm
         init_fbm_and_wm(); // What to do here if not fresh? Copy super, fbm, wm from disk.
         init_super();
         init_root_directory();
         init_inode_table();
-    } else { // TODO: Access old copy....
+    } else { // Access old copy
         init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
         read_blocks(0, 1, &super);
         read_blocks(1, NUM_DIRECT_POINTERS, &inode_table);
@@ -196,25 +241,19 @@ void mkssfs(int fresh) {
     }
     init_ofd();
 }
-
-/*
-	Opens the given file. If the file does not exist, a new file with size 0 is created. If it
-	exists, read pointer is at the beginning of the file, and write pointer at the end (append
-	mode).
-	------------------------------------------------------------------------------------------------
-	name: Name of the file to be opened
-
-	Returns: An integer corresponding to the index of the entry for the opened file in the file
-			 descriptor table.
-*/
+/**
+ * Opens the given file. If the file does not exist, a new file with size 0 is created. If it
+ * exists, read pointer is at the beginning of the file, and write pointer at the end (append
+ * mode).
+ *
+ * @param name  the name of the file to be opened
+ * @return      an integer corresponding to the index of the entry for the opened file in the file
+ *              descriptor table
+ */
 int ssfs_fopen(char *name) {
     if (strlen(name) < 1 || strlen(name) > MAX_FILENAME_LENGTH - 1) { // -1 for null termination
         return -1;
     }
-    // Access root directory
-    // Find inode
-    // Copy inode to OFD table
-    // Return read/write pointer
 
     for (int i = 0; i < NUM_FILES; i++) {
         if (strcmp(root_directory.directory_entries[i].filename, name) == 0) {
@@ -227,7 +266,7 @@ int ssfs_fopen(char *name) {
 
     // File doesn't exist
     for (int j = 0; j < NUM_FILES; j++) {
-        if (root_directory.directory_entries[j].filename[0] == '\0') {
+        if (root_directory.directory_entries[j].filename[0] == '\0') { // Free slot in the root directory
             inode_table.inodes[j].size = 0;
             save_inode_table();
             ofd_table.write_pointers[j] = 0;
@@ -241,62 +280,62 @@ int ssfs_fopen(char *name) {
     return -1; // No space for new file
 }
 
-/*
-	Closes the given file. The corresponding entry is removed from the open file descriptor table.
-	------------------------------------------------------------------------------------------------
-	fileID: The file ID corresponding to the file (from the open file descriptor table).
-
-	Returns: 0 on success, -1 on failure.
-*/
+/**
+ * Closes the given file. The corresponding entry is removed from the open file descriptor table.
+ *
+ * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
+ * @return        0 on success, -1 on failure
+ */
 int ssfs_fclose(int fileID) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
+        ofd_table.write_pointers[fileID] < 0)
         return -1;
     ofd_table.read_pointers[fileID] = -1;
     ofd_table.write_pointers[fileID] = -1;
     return 0;
 }
 
-/*
-	Move the read pointer to the given location in the file.
-	------------------------------------------------------------------------------------------------
-	fileID: The file ID corresponding to the file (from the open file descriptor table).
-	loc:	The location to move the read pointer to.
-
-	Returns: 0 on success, -1 on failure.
-*/
+/**
+ * Moves the read pointer to the given location in the file.
+ *
+ * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
+ * @param loc     the location to move the read pointer to
+ * @return        0 on success, -1 on failure
+ */
 int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
+        ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size)
         return -1;
     ofd_table.read_pointers[fileID] = loc;
     return 0;
 }
 
-/*
-	Move the write pointer to the given location in the file.
-	------------------------------------------------------------------------------------------------
-	fileID: The file ID corresponding to the file (from the open file descriptor table).
-	loc:	The location to move the write pointer to.
-
-	Returns: 0 on success, -1 on failure.
-*/
+/**
+ * Moves the write pointer to the given location in the file.
+ *
+ * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
+ * @param loc     the location to move the write pointer to
+ * @return        0 on success, -1 on failure
+ */
 int ssfs_fwseek(int fileID, int loc) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
+        ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size)
         return -1;
     ofd_table.write_pointers[fileID] = loc;
     return 0;
 }
 
-/*
-	Write characters into a file on the disk, starting from the write pointer of the current file.
-	------------------------------------------------------------------------------------------------
-	fileID: The file ID corresponding to the file (from the open file descriptor table).
-	buf:	The characters to be written into the file.
-	length: The number of bytes to be written.
-
-	Returns: The number of bytes written.
-*/
+/**
+ * Writes characters into a file on the disk, starting from the write pointer of the file.
+ *
+ * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
+ * @param buf     the characters to be written into the file
+ * @param length  the number of bytes to be written
+ * @return        the number of bytes written
+ */
 int ssfs_fwrite(int fileID, char *buf, int length) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || length < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
+        ofd_table.write_pointers[fileID] < 0 || length < 0)
         return -1;
     int write_pointer = ofd_table.write_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID];
@@ -309,22 +348,13 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     if (new_size % BLOCK_SIZE != 0)
         num_blocks++;
 
-    if (DEBUG)
-        printf("~num_blocks: %d\n", num_blocks);
-
     char *buf1 = calloc(1, (size_t) (num_blocks * BLOCK_SIZE));
     int old_read_pointer = ofd_table.read_pointers[fileID];
     ssfs_frseek(fileID, 0);
     ssfs_fread(fileID, buf1, size); // TODO: Make this more efficient (only read what is necessary)
     ssfs_frseek(fileID, old_read_pointer);
 
-    if (DEBUG)
-        printf("~buf1 after read: %s\n", buf1);
-
     memcpy(buf1 + write_pointer, buf, length);
-
-    if (DEBUG)
-        printf("~buf1 after memcpy: %s\n", buf1);
 
     indirect_block_t *indirect = NULL;
     for (int i = 0; i < num_blocks; i++) {
@@ -372,8 +402,6 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
             return -1;
         }
         write_blocks(block_num, 1, buf1 + (i * BLOCK_SIZE));
-        if (DEBUG)
-            printf("~buf: %s\n", buf1 + (i * BLOCK_SIZE));
     }
     free(buf1);
     if (indirect != NULL)
@@ -386,18 +414,17 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     return length;
 }
 
-/*
-	Read characters from a file on disk to a buffer, starting from the read pointer of the current
-	file.
-	------------------------------------------------------------------------------------------------
-	fileID: The file ID corresponding to the file (from the open file descriptor table).
-	buf:	A buffer to store the read bytes in (already allocated).
-	length: The number of bytes to be read.
-
-	Returns: The number of bytes read!! Not length (since length may be larger than what is actually left to read).
-*/
+/**
+ * Read characters from a file on disk to a buffer, starting from the read pointer of the current file.
+ *
+ * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
+ * @param buf     a buffer to store the read bytes in (already allocated)
+ * @param length  the number of bytes to be read
+ * @return        the number of bytes read
+ */
 int ssfs_fread(int fileID, char *buf, int length) {
-    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 || ofd_table.write_pointers[fileID] < 0 || length < 0)
+    if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
+        ofd_table.write_pointers[fileID] < 0 || length < 0)
         return -1;
     int read_pointer = ofd_table.read_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID];
@@ -428,6 +455,8 @@ int ssfs_fread(int fileID, char *buf, int length) {
             if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) {
                 free(buf1);
                 free(buf2);
+                if (indirect != NULL)
+                    free(indirect);
                 return -1;
             }
             block_num = indirect->inode_indices[indirect_index];
@@ -435,6 +464,8 @@ int ssfs_fread(int fileID, char *buf, int length) {
         if (block_num < 0) {
             free(buf1);
             free(buf2);
+            if (indirect != NULL)
+                free(indirect);
             return -1;
         }
         memset(buf1, 0, BLOCK_SIZE);
@@ -445,9 +476,6 @@ int ssfs_fread(int fileID, char *buf, int length) {
     free(buf1);
     memcpy(buf, buf2 + read_pointer, bytes_to_read);
 
-    if (DEBUG)
-        printf("~buf2: %s\n", buf2 + read_pointer);
-
     free(buf2);
     if (indirect != NULL)
         free(indirect);
@@ -457,14 +485,13 @@ int ssfs_fread(int fileID, char *buf, int length) {
     return bytes_to_read;
 }
 
-/*
-	Removes a file from the filesystem. The file is removed from the directory entry, the i-node
-	entry is released, and the data blocks used by the file are released.
-	------------------------------------------------------------------------------------------------
-	file: The file name.
-
-	Returns: 0 on success, -1 on failure.
-*/
+/**
+ * Removes a file from the filesystem. The file is removed from the directory entry, the i-node
+ * entry is released, and the data blocks used by the file are released.
+ *
+ * @param file  the file name
+ * @return      0 on success, -1 on failure
+ */
 int ssfs_remove(char *file) {
     // Set all blocks used by file to FREE (in FBM) and remove inode from inode table.
     for (int i = 0; i < NUM_FILES; i++) {
@@ -490,6 +517,7 @@ int ssfs_remove(char *file) {
                         fbm.bytes[block_num] = 1;
                     }
                 }
+                free(indirect);
                 inode_table.inodes[i].indirect = -1;
             }
             save_fbm();
@@ -501,22 +529,21 @@ int ssfs_remove(char *file) {
     return -1;
 }
 
-/*
-	Create a shadow of the file system. The newly added blocks become read-only.
-	------------------------------------------------------------------------------------------------
-	Returns: The index of the shadow root that holds the previous commit.
-*/
+/**
+ * Creates a shadow of the file system. The newly added blocks become read-only.
+ *
+ * @return  the index of the shadow root that holds the previous commit.
+ */
 int ssfs_commit() {
     return -1;
 }
 
-/*
-	Restore the file system to a previous shadow (state).
-	------------------------------------------------------------------------------------------------
-	cnum: The commit number to restore to.
-
-	Returns: 0 on success, -1 on failure.
-*/
+/**
+ * Restores the file system to a previous shadow (state).
+ *
+ * @param cnum  The commit number to restore to.
+ * @return      0 on success, -1 on failure
+ */
 int ssfs_restore(int cnum) {
     return -1;
 }
