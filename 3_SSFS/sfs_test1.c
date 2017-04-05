@@ -42,7 +42,7 @@ int simple_test(){
   //testing Remove
   test_remove_files(file_id, file_size, write_ptr, file_names, write_buf, num_file, &err_no);
   free_name_element(file_names, num_file);
-  //Make new files and attempt to write in again.
+  //Make new files and attempt to write in again. 
   test_open_new_files(file_names, file_id, num_file, &err_no);
   test_simple_write_files(file_id, file_size, write_ptr, write_buf, num_file, &err_no);
   test_read_all_files(file_id, file_size, write_buf, num_file, &err_no);

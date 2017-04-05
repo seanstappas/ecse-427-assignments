@@ -59,6 +59,7 @@ int test_persistence(int *error, int write_length){
         pid = fork(); //Split again for the write so both read and write happens on different processes
         if(pid == 0){
             //Create new file system fresh
+            printf("Checking Writing Files ... \n");
             mkssfs(1);
             file_id = ssfs_fopen(file_name);
             if(file_id < 0){
@@ -74,56 +75,78 @@ int test_persistence(int *error, int write_length){
                 free(write_data[i]);
             }
             exit(error_num);
-      }else{
-          waitpid(pid, &temp, 0);
-          error_num += WEXITSTATUS(temp);
-          pid = fork();
-          if(pid == 0){
-              char *read_buf = calloc(write_length + 1, sizeof(char));
-              mkssfs(0);
-              file_id = ssfs_fopen(file_name);
-              if(file_id < 0){
-                  fprintf(stderr, "Error. File id returned negative\n");
-                  error_num += 1;
-              }
-            for(int i = 0; i < 20; i++){
-                if(ssfs_fread(file_id, read_buf,write_length) != write_length){
-                    fprintf(stderr, "Error. Invalid number read ... \n");
-                    error_num += 1;
-                    }else if(strcmp(read_buf, write_data[i]) != 0){
-                        fprintf(stderr, "Error. Invalid read. Expected: \n%s\nReceived:\n%s\n", write_data[i], read_buf);
-                        error_num += 1;
-                    }
-              }
-              ssfs_fclose(file_id);   //Close file
-              ssfs_remove(file_name); //Remove the file
-              free(read_buf);
-              for(int i = 0; i < 20; i++){
-                  free(write_data[i]);
-              }
-              exit(error_num);
-          }else{
+        }else{
               waitpid(pid, &temp, 0);
-              error_num += WEXITSTATUS(temp);
-              char *read_buf = calloc(write_length + 1, sizeof(char));
-              read_buf[0] = '\0';
-              mkssfs(0); //Initialize stale file system. Testing if remove worked
-              file_id = ssfs_fopen(file_name);
-              ssfs_frseek(file_id, 0); //set seek to 0
-              if(ssfs_fread(file_id, read_buf, 512) > 0 && strlen(read_buf) > 0){
-                  fprintf(stderr, "Error. File should have been removed\n");
-                  error_num += 1;
+              if(WIFEXITED(temp) == 0){
+                  printf("Errors detected in Write Section. Persistence test exiting ... Error code: %d\n139 is Segfault.\n. Check valgrind for more information\n", temp);
+                  error_num = 10;
+                  exit(error_num);
+              }else{
+                  error_num = WEXITSTATUS(temp);
               }
-              for(int i = 0; i < 20; i++){
-                  free(write_data[i]);
+              pid = fork();
+              if(pid == 0){
+                  printf("Checking Reading Files ... \n");
+                  char *read_buf = calloc(write_length + 1, sizeof(char));
+                  mkssfs(0);
+                  file_id = ssfs_fopen(file_name);
+                  if(file_id < 0){
+                      fprintf(stderr, "Error. File id returned negative\n");
+                      error_num += 1;
+                  }
+                  ssfs_frseek(file_id, 0); //set seek to 0
+                  for(int i = 0; i < 20; i++){
+                        if(ssfs_fread(file_id, read_buf,write_length) != write_length){
+                            fprintf(stderr, "Error. Invalid number read ... \n");
+                            error_num += 1;
+                        }else if(strcmp(read_buf, write_data[i]) != 0){
+                            fprintf(stderr, "Error. Invalid read. \nExpected: \n%s\nReceived:\n%s\n", write_data[i], read_buf);
+                            error_num += 1;
+                        }
+                  }
+                  ssfs_fclose(file_id);   //Close file
+                  ssfs_remove(file_name); //Remove the file
+                  free(read_buf);
+                  for(int i = 0; i < 20; i++){
+                      free(write_data[i]);
+                  }
+                  printf("Exit Status 1: %d\n", error_num);
+                  exit(error_num);
+              }else{
+                  printf("Checking Removed Files ... \n");
+                  waitpid(pid, &temp, 0);
+                  if(WIFEXITED(temp) == 0){
+                      printf("Errors detected in Read Section. \nPersistence test exiting ... Error code: %d\n139 is Segfault. Check valgrind for more information\n", temp);
+                      error_num = 10;
+                      exit(error_num);
+                  }else{
+                      error_num = WEXITSTATUS(temp);
+                  }
+                  char *read_buf = calloc(write_length + 1, sizeof(char));
+                  read_buf[0] = '\0';
+                  mkssfs(0); //Initialize stale file system. Testing if remove worked
+                  file_id = ssfs_fopen(file_name);
+                  ssfs_frseek(file_id, 0); //set seek to 0
+                  if(ssfs_fread(file_id, read_buf, 512) > 0 && strlen(read_buf) > 0){
+                      fprintf(stderr, "Error. File should have been removed\n");
+                      error_num += 1;
+                  }
+                  for(int i = 0; i < 20; i++){
+                      free(write_data[i]);
+                  }
+                  free(read_buf);
+                  printf("Exit Status 2: %d\n", error_num);
+                  exit(error_num);
               }
-              free(read_buf);
-              exit(error_num);
           }
-        }
     }else{   
         waitpid(pid, &error_num, 0);
-        error_num = WEXITSTATUS(error_num);
+        if(WIFEXITED(error_num) == 0){
+            printf("Errors detected while checking removed files.. \nPersistence test exiting ... Error code: %d\n139 is Segfault. Check valgrind for more information\n", error_num);
+            error_num = 10;
+        }else{
+            error_num = WEXITSTATUS(error_num);
+        }
     }
     *error += error_num;
     printf("\n-------------------------------\nTest_num[%d]: Current Error Num: %d\n--------------------------------\n\n", test_num, *error);
