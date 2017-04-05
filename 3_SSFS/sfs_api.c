@@ -24,56 +24,86 @@
 
 #define DEBUG 0
 
+/**
+ * Simple version of the UNIX inodes, with only single indirect.
+ */
 typedef struct _inode_t { // total size of inode = 64 bytes
     int size; // can have negative size (init to -1). Represents size of file, in bytes (can mod for number of blocks...)
     int direct[NUM_DIRECT_POINTERS]; // init to -1
     int indirect; // init to -1. Only used for large files
 } inode_t;
 
+/**
+ * Super block, holding useful metadata about the file system and the system geometry.
+ */
 typedef struct _superblock_t {
-    int magic; // 4 bytes long
+    int magic;
     int block_size;
-    int num_blocks; // Q: 1024 + 3 or 1024 (data blocks)?
+    int num_blocks;
     int num_inodes;
     inode_t root;
     inode_t shadow[NUM_SHADOWS];
-    int32_t last_shadow; // index of last shadow node? init to -1
+    int32_t last_shadow;
 } super_block_t;
 
+/**
+ * Block type. From the program's point of view, the disk emulator is just an array of blocks.
+ */
 typedef struct _block_t {
     unsigned char bytes[BLOCK_SIZE]; // use char since 1 char = 1 byte
 } block_t;
 
-typedef struct _ofd_table_t { // Q: inode index here, or actually copy the inode?
+/**
+ * Open File Descriptor (OFD) table. Contains the read and write pointers for each file. Each file is identified by its
+ * index, which is the same for the OFD table, root directory, and inode table. This table is only stored in memory, and
+ * not on disk.
+ */
+typedef struct _ofd_table_t {
     int read_pointers[NUM_FILES];
     int write_pointers[NUM_FILES];
 } ofd_table_t;
 
-typedef struct _directory_entry_t { // fits within 16 bytes (actually 14)
-    char filename[MAX_FILENAME_LENGTH]; // 10 bytes // TODO: think about entry 0... match to inode 0, is this root?
+/**
+ * Single directory entry, which is simply the file name.
+ */
+typedef struct _directory_entry_t {
+    char filename[MAX_FILENAME_LENGTH];
 } directory_entry_t;
 
+/**
+ * Root directory which contains all the directory entries for each file. Each file is identified by its index, which
+ * is the same for the OFD table, root directory, and inode table. This root directory resides on the disk, but will
+ * also be cached in memory.
+ */
 typedef struct _root_directory_t { // A block of directory entries (root directory)
     directory_entry_t directory_entries[NUM_FILES];
 } root_directory_t;
 
+/**
+ * Structure containing all the inodes. This will be present on the disk, but will also be cached in memory.
+ */
 typedef struct _inode_table_t {
     inode_t inodes[NUM_FILES];
 } inode_table_t;
 
 /**
- * A block holding only pointers to other data blocks.
+ * A block holding only pointers to other data blocks. This is used for large files, where the direct pointers alone of
+ * the inode are not enough to store the entire file. Each file can have a maximum of one indirect block.
  */
 typedef struct _indirect_block_t {
     int inode_indices[NUM_INDIRECT_POINTERS_PER_BLOCK];
 } indirect_block_t;
 
-super_block_t super; // Defines the file system geometry
-block_t fbm; // Unused data blocks (doesn't track super, fbm or wm) (value 1 = data block at that index is unused)
-block_t wm; // Writeable data blocks (value 1 = data block at that index is writeable). Not necessary for simple system (without shadowing)
-ofd_table_t ofd_table; // Open File Descriptor Table (in-memory cache of RW pointers + inodes).
-root_directory_t root_directory; // Cache of all filenames
-inode_table_t inode_table;
+/**
+ * In-memory caches of all the important structures (super block, fbm block, wm block, OFD table, root directory, and
+ * inode table).
+ */
+super_block_t super; // Cache of the super block
+block_t fbm; // Cache of the FBM block, which keeps track of unused data blocks
+block_t wm; // Cache of the WM block, which keeps track of writeable data blocks
+ofd_table_t ofd_table; // Open File Descriptor table (cache of read and write pointers for each file)
+root_directory_t root_directory; // Cache of all file names
+inode_table_t inode_table; // Cache of all inodes
 
 /**
  * Writes a single block to the disk emulator.
@@ -115,6 +145,9 @@ void save_wm() {
     write_single_block(NUM_DATA_BLOCKS - 1, &wm);
 }
 
+/**
+ * Saves the root directory the disk emulator.
+ */
 void save_root_directory() {
     write_blocks(15, 4, &root_directory);
 }
@@ -164,7 +197,7 @@ void init_inode_table() {
  */
 void init_fbm_and_wm() {
     for (int i = 0; i < BLOCK_SIZE; i++) {
-        fbm.bytes[i] = 1; // Only need to use the LSB here, instead of 0xFF
+        fbm.bytes[i] = 1;
         wm.bytes[i] = 1;
     }
     fbm.bytes[BLOCK_SIZE - 1] = 0;
@@ -191,7 +224,7 @@ void init_super() { // populate root j-node // TODO: update super for shadowing 
         root.direct[i] = get_free_block(); // find free blocks for every direct pointer (should be 1...14)
     }
     super.root = root;
-    write_single_block(0, &super);
+    write_single_block(SUPER_INDEX, &super);
 }
 
 /**
@@ -227,13 +260,13 @@ void mkssfs(int fresh) {
     char *disk_name = "seanstappas";
     if (fresh) { // Create new copy
         init_fresh_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3); // +3 for super, fbm, wm
-        init_fbm_and_wm(); // What to do here if not fresh? Copy super, fbm, wm from disk.
+        init_fbm_and_wm();
         init_super();
         init_root_directory();
         init_inode_table();
     } else { // Access old copy
         init_disk(disk_name, BLOCK_SIZE, NUM_DATA_BLOCKS + 3);
-        read_blocks(0, 1, &super);
+        read_blocks(SUPER_INDEX, 1, &super);
         read_blocks(1, NUM_DIRECT_POINTERS, &inode_table);
         read_blocks(15, 4, &root_directory);
         read_blocks(FBM_INDEX, 1, &fbm);
@@ -249,19 +282,18 @@ void mkssfs(int fresh) {
  *
  * @param name  the name of the file to be opened
  * @return      an integer corresponding to the index of the entry for the opened file in the file
- *              descriptor table
+ *              descriptor table, or -1 on failure
  */
 int ssfs_fopen(char *name) {
-    if (strlen(name) < 1 || strlen(name) > MAX_FILENAME_LENGTH - 1) { // Error checking
-        return -1;
-    }
+    if (strlen(name) < 1 || strlen(name) > MAX_FILENAME_LENGTH - 1)
+        return -1; // Error: invalid name
 
     for (int i = 0; i < NUM_FILES; i++) {
         if (strcmp(root_directory.directory_entries[i].filename, name) == 0) { // Root directory match found
             int size = inode_table.inodes[i].size;
             ofd_table.write_pointers[i] = size; // Update read & write pointers
             ofd_table.read_pointers[i] = 0;
-            return i; // File exists
+            return i; // Success: returns index of existing file
         }
     }
 
@@ -275,11 +307,11 @@ int ssfs_fopen(char *name) {
             strncpy(root_directory.directory_entries[j].filename, name,
                     MAX_FILENAME_LENGTH); // Place the name in the root directory
             save_root_directory();
-            return j;
+            return j; // Success: returns index of new file
         }
     }
 
-    return -1; // No space for new file
+    return -1; // Error: no space for new file
 }
 
 /**
@@ -290,11 +322,13 @@ int ssfs_fopen(char *name) {
  */
 int ssfs_fclose(int fileID) {
     if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
-        ofd_table.write_pointers[fileID] < 0) // Error checking
-        return -1;
-    ofd_table.read_pointers[fileID] = -1;
+        ofd_table.write_pointers[fileID] < 0)
+        return -1; // Error: invalid fileID
+
+    ofd_table.read_pointers[fileID] = -1; // Reset read & write pointers
     ofd_table.write_pointers[fileID] = -1;
-    return 0;
+
+    return 0; // Success
 }
 
 /**
@@ -304,12 +338,14 @@ int ssfs_fclose(int fileID) {
  * @param loc     the location to move the read pointer to
  * @return        0 on success, -1 on failure
  */
-int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
+int ssfs_frseek(int fileID, int loc) {
     if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
         ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size) // Error checking
-        return -1;
-    ofd_table.read_pointers[fileID] = loc;
-    return 0;
+        return -1; // Error: invalid fileID or loc
+
+    ofd_table.read_pointers[fileID] = loc; // Update read pointer
+
+    return 0; // Success
 }
 
 /**
@@ -321,24 +357,28 @@ int ssfs_frseek(int fileID, int loc) { // TODO: Check if loc is valid?
  */
 int ssfs_fwseek(int fileID, int loc) {
     if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
-        ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size) // Error checking
-        return -1;
-    ofd_table.write_pointers[fileID] = loc;
-    return 0;
+        ofd_table.write_pointers[fileID] < 0 || loc < 0 || loc > inode_table.inodes[fileID].size)
+        return -1; // Error: invalid fileID or loc
+
+    ofd_table.write_pointers[fileID] = loc; // Update write pointer
+
+    return 0; // Success
 }
 
 /**
- * Writes characters into a file on the disk, starting from the write pointer of the file.
+ * Writes characters into a file on the disk, starting from the write pointer of the file. It is up to the user to
+ * properly initialize and provide the data buffer.
  *
  * @param fileID  the file ID corresponding to the file (from the open file descriptor table)
  * @param buf     the characters to be written into the file
  * @param length  the number of bytes to be written
- * @return        the number of bytes written
+ * @return        the number of bytes written, or -1 on failure (if reached maximum capacity)
  */
 int ssfs_fwrite(int fileID, char *buf, int length) {
     if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
-        ofd_table.write_pointers[fileID] < 0 || length < 0) // Error checking
-        return -1;
+        ofd_table.write_pointers[fileID] < 0 || length < 0)
+        return -1; // Error: invalid fileID or length
+
     int write_pointer = ofd_table.write_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID]; // Find inode associated with current file
     int size = inode.size;
@@ -358,7 +398,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
 
     memcpy(buf1 + write_pointer, buf, length);
 
-    indirect_block_t *indirect = NULL;
+    indirect_block_t *indirect = NULL; // Cached indirect block
     for (int i = 0; i < num_blocks; i++) {
         int block_num;
         if (i < NUM_DIRECT_POINTERS) { // Direct blocks
@@ -383,11 +423,11 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
                 if (indirect == NULL)
                     indirect = (indirect_block_t *) read_single_block(inode.indirect); // Cache single indirect block
                 int indirect_index = i - NUM_DIRECT_POINTERS;
-                if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) { // Reached maximum number of indirect blocks
+                if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) {
                     free(buf1);
                     if (indirect != NULL)
                         free(indirect);
-                    return -1;
+                    return -1; // Error: reached maximum number of indirect blocks
                 }
                 block_num = indirect->inode_indices[indirect_index];
                 if (block_num < 0) { // Uninitialized indirect block
@@ -397,11 +437,11 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
                 }
             }
         }
-        if (block_num < 0 || block_num >= NUM_DATA_BLOCKS) { // No free block (reached maximum capacity)
+        if (block_num < 0 || block_num >= NUM_DATA_BLOCKS) {
             free(buf1);
             if (indirect != NULL)
                 free(indirect);
-            return -1;
+            return -1; // Error: no free block (reached maximum capacity)
         }
         write_blocks(block_num, 1, buf1 + (i * BLOCK_SIZE));
     }
@@ -413,7 +453,7 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
     ofd_table.write_pointers[fileID] = new_size; // Move the write pointer to the end of the file
     save_inode_table();
 
-    return length;
+    return length; // Success: returns the number of bytes written
 }
 
 /**
@@ -426,13 +466,15 @@ int ssfs_fwrite(int fileID, char *buf, int length) {
  */
 int ssfs_fread(int fileID, char *buf, int length) {
     if (fileID < 0 || fileID >= NUM_FILES || ofd_table.read_pointers[fileID] < 0 ||
-        ofd_table.write_pointers[fileID] < 0 || length < 0) // Error checking
-        return -1;
+        ofd_table.write_pointers[fileID] < 0 || length < 0)
+        return -1; // Error: invalid fileID or length
+
     int read_pointer = ofd_table.read_pointers[fileID];
     inode_t inode = inode_table.inodes[fileID]; // Find inode associated with current file
     int size = inode.size;
     if (size == 0)
-        return 0;
+        return 0; // Success: no bytes to read
+
     int num_blocks = size / BLOCK_SIZE; // Number of blocks needed to hold file
     if (size % BLOCK_SIZE != 0)
         num_blocks++;
@@ -440,8 +482,8 @@ int ssfs_fread(int fileID, char *buf, int length) {
     int bytes_to_read = length; // Number of bytes to read
     if (read_pointer + length > size) {
         bytes_to_read = size - read_pointer;
-        if (bytes_to_read <= 0) // No bytes to read
-            return 0;
+        if (bytes_to_read <= 0)
+            return 0; // Success: no bytes to read
     }
     char *buf1 = calloc(1, BLOCK_SIZE); // Buffer to hold each block read
     char *buf2 = calloc(1, (size_t) (num_blocks * BLOCK_SIZE)); // Buffer to hold the entire file
@@ -454,21 +496,21 @@ int ssfs_fread(int fileID, char *buf, int length) {
             if (indirect == NULL)
                 indirect = (indirect_block_t *) read_single_block(inode.indirect); // Cache single indirect block
             int indirect_index = i - NUM_DIRECT_POINTERS;
-            if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) { // Reached maximum size of single indirect block
+            if (indirect_index >= NUM_INDIRECT_POINTERS_PER_BLOCK) {
                 free(buf1);
                 free(buf2);
                 if (indirect != NULL)
                     free(indirect);
-                return -1;
+                return -1; // Error: reached maximum size of single indirect block
             }
             block_num = indirect->inode_indices[indirect_index];
         }
-        if (block_num < 0) { // Invalid block number (tried to read from uninitialized block)
+        if (block_num < 0) {
             free(buf1);
             free(buf2);
             if (indirect != NULL)
                 free(indirect);
-            return -1;
+            return -1; // Error: invalid block number (tried to read from uninitialized block)
         }
         memset(buf1, 0, BLOCK_SIZE); // Clear first buffer
         read_blocks(block_num, 1, buf1); // Place data block in first buffer
@@ -484,18 +526,18 @@ int ssfs_fread(int fileID, char *buf, int length) {
 
     ofd_table.read_pointers[fileID] = read_pointer + bytes_to_read; // Move read pointer up
 
-    return bytes_to_read;
+    return bytes_to_read; // Success: returns the number of bytes read
 }
 
 /**
  * Removes a file from the filesystem. The file is removed from the directory entry, the i-node
- * entry is released, and the data blocks used by the file are released.
+ * entry is released, and the data blocks used by the file are released. Set all blocks used by file to free in the FBM
+ * and remove the associated inode from the inode table.
  *
  * @param file  the file name
  * @return      0 on success, -1 on failure
  */
 int ssfs_remove(char *file) {
-    // Set all blocks used by file to FREE (in FBM) and remove inode from inode table.
     for (int i = 0; i < NUM_FILES; i++) {
         if (strcmp(root_directory.directory_entries[i].filename, file) == 0) { // Found file in root directory
             root_directory.directory_entries[i].filename[0] = '\0'; // Clear filename
@@ -524,11 +566,11 @@ int ssfs_remove(char *file) {
             }
             save_fbm();
             save_inode_table();
-            return 0;
+            return 0; // Success: file removed
         }
     }
 
-    return -1; // File not found in root directory
+    return -1; // Error: file not found in root directory (invalid file name)
 }
 
 /**
