@@ -25,12 +25,9 @@
 #define MAX_FILENAME_LENGTH 10
 #define DIRECTORY_ENTRY_LENGTH 16
 #define NUM_ROOT_DIRECTORY_BLOCKS 4
-
 #define SUPER_INDEX 0
 #define FBM_INDEX 1022
 #define WM_INDEX 1023
-
-#define DEBUG 0
 
 /**
  * Simple version of the UNIX inodes, with only single indirect.
@@ -588,13 +585,13 @@ int ssfs_remove(char *file) {
  */
 int ssfs_commit() {
     int last_shadow = super.last_shadow;
-    if (last_shadow == -1)
+    if (last_shadow == -1) // Uninitialized last shadow
         return -1;
     write_single_block(NUM_DATA_BLOCKS - 1, &fbm); // Copy the FBM into the WM
     int next_shadow = (last_shadow + 1) % NUM_SHADOWS;
     super.shadow[next_shadow].size = 0;
     super.last_shadow = next_shadow;
-    write_single_block(0, &super);
+    write_single_block(0, &super); // Save super
     return last_shadow;
 }
 
@@ -607,6 +604,6 @@ int ssfs_commit() {
 int ssfs_restore(int cnum) {
     if (cnum < 0 || cnum >= NUM_SHADOWS)
         return -1;
-    super.root = super.shadow[cnum];
+    super.root = super.shadow[cnum]; // Copy the specified shadow to the root
     return 0;
 }

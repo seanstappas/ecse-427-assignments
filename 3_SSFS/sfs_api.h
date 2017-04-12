@@ -6,9 +6,6 @@
  * April 11, 2017
  */
 
-
-//Functions you should implement.
-//Return -1 for error besides mkssfs
 void mkssfs(int fresh);
 int ssfs_fopen(char *name);
 int ssfs_fclose(int fileID);
