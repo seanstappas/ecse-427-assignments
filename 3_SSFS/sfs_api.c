@@ -43,7 +43,7 @@ typedef struct _superblock_t {
     int num_inodes;
     inode_t root;
     inode_t shadow[NUM_SHADOWS];
-    int32_t last_shadow;
+    int last_shadow;
 } super_block_t;
 
 /**
@@ -576,10 +576,18 @@ int ssfs_remove(char *file) {
 /**
  * Creates a shadow of the file system. The newly added blocks become read-only.
  *
- * @return  the index of the shadow root that holds the previous commit.
+ * @return  the index of the shadow root that holds the previous commit on success, -1 on failure
  */
 int ssfs_commit() {
-    return -1;
+    int last_shadow = super.last_shadow;
+    if (last_shadow == -1)
+        return -1;
+    write_single_block(NUM_DATA_BLOCKS - 1, &fbm); // Copy the FBM into the WM
+    int next_shadow = (last_shadow + 1) % NUM_SHADOWS;
+    super.shadow[next_shadow].size = 0;
+    super.last_shadow = next_shadow;
+    write_single_block(0, &super);
+    return last_shadow;
 }
 
 /**
@@ -589,5 +597,8 @@ int ssfs_commit() {
  * @return      0 on success, -1 on failure
  */
 int ssfs_restore(int cnum) {
-    return -1;
+    if (cnum < 0 || cnum >= NUM_SHADOWS)
+        return -1;
+    super.root = super.shadow[cnum];
+    return 0;
 }
