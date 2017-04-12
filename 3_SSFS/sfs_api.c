@@ -1,3 +1,11 @@
+/**
+ * ECSE-427: Assignment 3
+ * Simple Shadow File System
+ *
+ * Sean Stappas 260639512
+ * April 11, 2017
+ */
+
 #include "sfs_api.h"
 #include "disk_emu.h"
 

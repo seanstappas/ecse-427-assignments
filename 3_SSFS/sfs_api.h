@@ -1,4 +1,13 @@
-//Functions you should implement. 
+/**
+ * ECSE-427: Assignment 3
+ * Simple Shadow File System
+ *
+ * Sean Stappas 260639512
+ * April 11, 2017
+ */
+
+
+//Functions you should implement.
 //Return -1 for error besides mkssfs
 void mkssfs(int fresh);
 int ssfs_fopen(char *name);
